@@ -65,6 +65,9 @@ func main() {
 	g := genkit.Init(ctx,
 		genkit.WithPlugins(bedrockPlugin),
 		genkit.WithDefaultModel("bedrock/anthropic.claude-3-haiku-20240307-v1:0"), // Set default model
+        
+        // Or with a global/regional inference profile
+        // genkit.WithDefaultModel("bedrock/global.anthropic.claude-3-haiku-20240307-v1:0")
 	)
 
     bedrock.DefineCommonModels(bedrockPlugin, g) // Optional: Define common models for easy access
