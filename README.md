@@ -16,7 +16,7 @@ A comprehensive AWS Bedrock plugin for Genkit Go that provides text generation, 
 ## Supported Models
 
 ### Text Generation Models (with Tool Calling Support)
-- **Anthropic Claude 3/3.5/4**: Haiku, Sonnet, Opus (all versions)
+- **Anthropic Claude 3/3.5/4/4.5**: Haiku, Sonnet, Opus (all versions)
 - **Amazon Nova**: Micro, Lite, Pro
 - **Meta Llama**: 3.1/3.2/3.3 (8B, 70B, 405B)
 - **Mistral AI**: Large, 7B models
@@ -65,6 +65,9 @@ func main() {
 	g := genkit.Init(ctx,
 		genkit.WithPlugins(bedrockPlugin),
 		genkit.WithDefaultModel("bedrock/anthropic.claude-3-haiku-20240307-v1:0"), // Set default model
+        
+        // Or with a global/regional inference profile
+        // genkit.WithDefaultModel("bedrock/global.anthropic.claude-3-haiku-20240307-v1:0")
 	)
 
     bedrock.DefineCommonModels(bedrockPlugin, g) // Optional: Define common models for easy access

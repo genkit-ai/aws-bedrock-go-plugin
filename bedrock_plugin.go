@@ -28,7 +28,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +51,12 @@ type (
 	ToolChoice    = string
 	FinishReason  = string
 )
+
+// ModelCapability represents the capabilities of a model
+type ModelCapability struct {
+	Multimodal bool // Supports image/media inputs
+	Tools      bool // Supports function calling
+}
 
 // Constants
 const provider = "bedrock"
@@ -82,83 +87,72 @@ const (
 
 const bedrockCachePointTypeKey = "bedrockCachePointType"
 
-var (
-	// Models that support images/multimodal inputs
-	multimodalModels = []string{
-		// Anthropic Claude 3/3.5/3.7 models
-		"anthropic.claude-3-haiku-20240307-v1:0",
-		"anthropic.claude-3-sonnet-20240229-v1:0",
-		"anthropic.claude-3-opus-20240229-v1:0",
-		"anthropic.claude-3-5-sonnet-20240620-v1:0",
-		"anthropic.claude-3-5-sonnet-20241022-v2:0",
-		"anthropic.claude-3-7-sonnet-20250219-v1:0",
-		// Anthropic Claude 4 models
-		"anthropic.claude-opus-4-20250514-v1:0",
-		"anthropic.claude-sonnet-4-20250514-v1:0",
-		// Amazon Nova models (multimodal: text, image)
-		"amazon.nova-lite-v1:0",
-		"amazon.nova-pro-v1:0",
-		"amazon.nova-premier-v1:0",
-		// Meta Llama multimodal models
-		"meta.llama3-2-11b-instruct-v1:0",
-		"meta.llama3-2-90b-instruct-v1:0",
-		"meta.llama4-maverick-17b-instruct-v1:0",
-		"meta.llama4-scout-17b-instruct-v1:0",
-		// Mistral multimodal models
-		"mistral.pixtral-large-2502-v1:0",
-	}
+// inferenceProfilePrefixes lists all valid inference profile region prefixes.
+// When an inference profile is passed instead of a model ID, the prefix is
+// stripped before checking capabilities.
+var inferenceProfilePrefixes = []string{
+	"global.",
+	"us.",
+	"eu.",
+	"jp.",
+	"apac.",
+	"au.",
+	"us-gov.",
+}
 
-	// Models that support function calling/tools
-	toolSupportedModels = []string{
-		// Anthropic Claude 3/3.5/3.7 models
-		"anthropic.claude-3-haiku-20240307-v1:0",
-		"anthropic.claude-3-sonnet-20240229-v1:0",
-		"anthropic.claude-3-opus-20240229-v1:0",
-		"anthropic.claude-3-5-haiku-20241022-v1:0",
-		"anthropic.claude-3-5-sonnet-20240620-v1:0",
-		"anthropic.claude-3-5-sonnet-20241022-v2:0",
-		"anthropic.claude-3-7-sonnet-20250219-v1:0",
-		// Anthropic Claude 4 models
-		"anthropic.claude-opus-4-20250514-v1:0",
-		"anthropic.claude-sonnet-4-20250514-v1:0",
-		// Amazon Nova models
-		"amazon.nova-micro-v1:0",
-		"amazon.nova-lite-v1:0",
-		"amazon.nova-pro-v1:0",
-		"amazon.nova-premier-v1:0",
-		// Cohere Command models
-		"cohere.command-r-v1:0",
-		"cohere.command-r-plus-v1:0",
-		// Mistral models
-		"mistral.mistral-large-2402-v1:0",
-		"mistral.mistral-large-2407-v1:0",
-		"mistral.mistral-small-2402-v1:0",
-		"mistral.pixtral-large-2502-v1:0",
-		// AI21 Labs Jamba models
-		"ai21.jamba-1-5-large-v1:0",
-		"ai21.jamba-1-5-mini-v1:0",
-		// Meta Llama models
-		"meta.llama3-8b-instruct-v1:0",
-		"meta.llama3-70b-instruct-v1:0",
-		"meta.llama3-1-8b-instruct-v1:0",
-		"meta.llama3-1-70b-instruct-v1:0",
-		"meta.llama3-1-405b-instruct-v1:0",
-		"meta.llama3-2-1b-instruct-v1:0",
-		"meta.llama3-2-3b-instruct-v1:0",
-		"meta.llama3-2-11b-instruct-v1:0",
-		"meta.llama3-2-90b-instruct-v1:0",
-		"meta.llama3-3-70b-instruct-v1:0",
-		"meta.llama4-maverick-17b-instruct-v1:0",
-		"meta.llama4-scout-17b-instruct-v1:0",
-		// DeepSeek models
-		"deepseek.r1-v1:0",
-		// Writer models
-		"writer.palmyra-x4-v1:0",
-		"writer.palmyra-x5-v1:0",
-		// TwelveLabs models
-		"twelvelabs.pegasus-1-2-v1:0",
-	}
-)
+// modelCapabilities maps model IDs to their capabilities.
+// This consolidates the previous multimodalModels and toolSupportedModels lists.
+var modelCapabilities = map[string]ModelCapability{
+	// Anthropic Claude 3 models
+	"anthropic.claude-3-haiku-20240307-v1:0":    {Multimodal: true, Tools: true},
+	"anthropic.claude-3-sonnet-20240229-v1:0":   {Multimodal: true, Tools: true},
+	"anthropic.claude-3-opus-20240229-v1:0":     {Multimodal: true, Tools: true},
+	"anthropic.claude-3-5-haiku-20241022-v1:0":  {Multimodal: false, Tools: true},
+	"anthropic.claude-3-5-sonnet-20240620-v1:0": {Multimodal: true, Tools: true},
+	"anthropic.claude-3-5-sonnet-20241022-v2:0": {Multimodal: true, Tools: true},
+	"anthropic.claude-3-7-sonnet-20250219-v1:0": {Multimodal: true, Tools: true},
+	// Anthropic Claude 4/4.5 models
+	"anthropic.claude-opus-4-20250514-v1:0":     {Multimodal: true, Tools: true},
+	"anthropic.claude-sonnet-4-20250514-v1:0":   {Multimodal: true, Tools: true},
+	"anthropic.claude-sonnet-4-5-20250929-v1:0": {Multimodal: true, Tools: true},
+	"anthropic.claude-opus-4-5-20251101-v1:0":   {Multimodal: true, Tools: true},
+	// Amazon Nova models
+	"amazon.nova-micro-v1:0":   {Multimodal: false, Tools: true},
+	"amazon.nova-lite-v1:0":    {Multimodal: true, Tools: true},
+	"amazon.nova-pro-v1:0":     {Multimodal: true, Tools: true},
+	"amazon.nova-premier-v1:0": {Multimodal: true, Tools: true},
+	// Cohere Command models
+	"cohere.command-r-v1:0":      {Multimodal: false, Tools: true},
+	"cohere.command-r-plus-v1:0": {Multimodal: false, Tools: true},
+	// Mistral models
+	"mistral.mistral-large-2402-v1:0": {Multimodal: false, Tools: true},
+	"mistral.mistral-large-2407-v1:0": {Multimodal: false, Tools: true},
+	"mistral.mistral-small-2402-v1:0": {Multimodal: false, Tools: true},
+	"mistral.pixtral-large-2502-v1:0": {Multimodal: true, Tools: true},
+	// AI21 Labs Jamba models
+	"ai21.jamba-1-5-large-v1:0": {Multimodal: false, Tools: true},
+	"ai21.jamba-1-5-mini-v1:0":  {Multimodal: false, Tools: true},
+	// Meta Llama models
+	"meta.llama3-8b-instruct-v1:0":           {Multimodal: false, Tools: true},
+	"meta.llama3-70b-instruct-v1:0":          {Multimodal: false, Tools: true},
+	"meta.llama3-1-8b-instruct-v1:0":         {Multimodal: false, Tools: true},
+	"meta.llama3-1-70b-instruct-v1:0":        {Multimodal: false, Tools: true},
+	"meta.llama3-1-405b-instruct-v1:0":       {Multimodal: false, Tools: true},
+	"meta.llama3-2-1b-instruct-v1:0":         {Multimodal: false, Tools: true},
+	"meta.llama3-2-3b-instruct-v1:0":         {Multimodal: false, Tools: true},
+	"meta.llama3-2-11b-instruct-v1:0":        {Multimodal: true, Tools: true},
+	"meta.llama3-2-90b-instruct-v1:0":        {Multimodal: true, Tools: true},
+	"meta.llama3-3-70b-instruct-v1:0":        {Multimodal: false, Tools: true},
+	"meta.llama4-maverick-17b-instruct-v1:0": {Multimodal: true, Tools: true},
+	"meta.llama4-scout-17b-instruct-v1:0":    {Multimodal: true, Tools: true},
+	// DeepSeek models
+	"deepseek.r1-v1:0": {Multimodal: false, Tools: true},
+	// Writer models
+	"writer.palmyra-x4-v1:0": {Multimodal: false, Tools: true},
+	"writer.palmyra-x5-v1:0": {Multimodal: false, Tools: true},
+	// TwelveLabs models
+	"twelvelabs.pegasus-1-2-v1:0": {Multimodal: false, Tools: true},
+}
 
 // Bedrock provides configuration options for the AWS Bedrock plugin.
 type Bedrock struct {
@@ -304,9 +298,13 @@ func Model(g *genkit.Genkit, name string) ai.Model {
 }
 
 // inferModelCapabilities infers model capabilities based on model name and type.
+// It strips any inference profile prefix before looking up capabilities.
 func (b *Bedrock) inferModelCapabilities(modelName, modelType string) *ai.ModelInfo {
-	supportsTools := slices.Contains(toolSupportedModels, modelName)
-	supportsMedia := slices.Contains(multimodalModels, modelName)
+	// Strip inference profile prefix to get base model ID for capability lookup
+	baseModelID := b.stripInferenceProfilePrefix(modelName)
+
+	// Look up capabilities from the map
+	caps, found := modelCapabilities[baseModelID]
 
 	switch modelType {
 	case "image":
@@ -334,9 +332,9 @@ func (b *Bedrock) inferModelCapabilities(modelName, modelType string) *ai.ModelI
 			Label: modelName,
 			Supports: &ai.ModelSupports{
 				Multiturn:  true,
-				Tools:      supportsTools,
+				Tools:      found && caps.Tools,
 				SystemRole: true,
-				Media:      supportsMedia,
+				Media:      found && caps.Multimodal,
 			},
 		}
 	}
@@ -1404,6 +1402,18 @@ func (b *Bedrock) validateAndNormalizeJSONSchema(schema map[string]interface{}) 
 	}
 
 	return normalized
+}
+
+// stripInferenceProfilePrefix removes the regional inference profile prefix
+// from a model ID if present, returning the base model ID.
+// Example: "us.anthropic.claude-3-haiku-20240307-v1:0" -> "anthropic.claude-3-haiku-20240307-v1:0"
+func (b *Bedrock) stripInferenceProfilePrefix(modelID string) string {
+	for _, prefix := range inferenceProfilePrefixes {
+		if strings.HasPrefix(modelID, prefix) {
+			return strings.TrimPrefix(modelID, prefix)
+		}
+	}
+	return modelID
 }
 
 // Helper functions for creating JSON Schema patterns
