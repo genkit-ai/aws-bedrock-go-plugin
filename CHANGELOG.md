@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.10.5...v1.11.0) (2026-01-26)
+
+### 🚀 Features
+
+* **models:** Support calling models via cross-region inference profiles. ([#67](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/67)) ([20eab2a](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/20eab2a201609d47e8ba33ca470abbbd4e48409c))
+
+### 🐛 Bug Fixes
+
+* release ([c2770a6](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/c2770a60330cd1e329cd78444b164271de6a1cd4))
+
 ## [1.10.5](https://github.com/xavidop/genkit-aws-bedrock-go/compare/v1.10.4...v1.10.5) (2025-12-15)
 
 ### ⚙️ Continuous Integration
