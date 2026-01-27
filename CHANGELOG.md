@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.11.0...v1.11.1) (2026-01-27)
+
+### 🐛 Bug Fixes
+
+* release ([d1f9901](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/d1f99019894ff3fa716cf42d2c818b4877037145))
+
 ## [1.11.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.10.5...v1.11.0) (2026-01-26)
 
 ### 🚀 Features
