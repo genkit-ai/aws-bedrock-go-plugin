@@ -128,8 +128,8 @@ changelog:
 
 release:
   github:
-    owner: xavidop
-    name: genkit-aws-bedrock-go
+    owner: genkit-ai
+    name: aws-bedrock-go-plugin
   name_template: "{{.ProjectName}} v{{.Version}}"
   header: |
     ## AWS Bedrock Plugin for Genkit Go {{.Version}}
@@ -146,7 +146,7 @@ release:
     
     ### What's Changed
   footer: |
-    **Full Changelog**: https://github.com/xavidop/genkit-aws-bedrock-go/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/{{ .PreviousTag }}...{{ .Tag }}
     
     ## Supported Models
     
@@ -160,8 +160,8 @@ release:
     
     ## Documentation
     
-    - [README](https://github.com/xavidop/genkit-aws-bedrock-go/blob/{{.Tag}}/README.md)
-    - [Examples](https://github.com/xavidop/genkit-aws-bedrock-go/tree/{{.Tag}}/examples)
+    - [README](https://github.com/genkit-ai/aws-bedrock-go-plugin/blob/{{.Tag}}/README.md)
+    - [Examples](https://github.com/genkit-ai/aws-bedrock-go-plugin/tree/{{.Tag}}/examples)
     - [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
   draft: false
   prerelease: auto

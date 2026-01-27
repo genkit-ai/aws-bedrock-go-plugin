@@ -230,7 +230,7 @@ The repository includes comprehensive examples:
 
 ```bash
 # Clone the repository
-git clone https://github.com/xavidop/genkit-aws-bedrock-go
+git clone https://github.com/genkit-ai/aws-bedrock-go-plugin
 cd genkit-aws-bedrock
 
 # Run basic example
