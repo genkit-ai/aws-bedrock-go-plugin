@@ -23,6 +23,8 @@
 // - gemini: https://github.com/firebase/genkit/blob/main/go/plugins/googlegenai/gemini.go
 package bedrock
 
+// test 2
+
 import (
 	"context"
 	"encoding/base64"
