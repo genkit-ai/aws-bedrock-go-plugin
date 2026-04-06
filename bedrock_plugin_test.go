@@ -1,4 +1,5 @@
 // Copyright 2025 Xavier Portilla Edo
+// Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +18,11 @@
 package bedrock
 
 import (
+	"encoding/base64"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/firebase/genkit/go/ai"
 )
 
 func TestInferModelCapabilities_WithInferenceProfiles(t *testing.T) {
@@ -193,11 +198,18 @@ func TestModelCapabilities_KnownModels(t *testing.T) {
 		{"anthropic.claude-3-5-haiku-20241022-v1:0", false, true}, // 3.5 Haiku is text-only
 		{"anthropic.claude-3-5-sonnet-20241022-v2:0", true, true},
 		{"anthropic.claude-3-7-sonnet-20250219-v1:0", true, true},
-		// Claude 4 family
+		// Claude 4/4.5/4.6 family
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", true, true},
+		{"anthropic.claude-opus-4-1-20250805-v1:0", true, true},
 		{"anthropic.claude-opus-4-20250514-v1:0", true, true},
 		{"anthropic.claude-sonnet-4-20250514-v1:0", true, true},
 		{"anthropic.claude-sonnet-4-5-20250929-v1:0", true, true},
 		{"anthropic.claude-opus-4-5-20251101-v1:0", true, true},
+		{"anthropic.claude-sonnet-4-6", true, true},
+		{"anthropic.claude-opus-4-6-v1", true, true},
+		// Provisioned-throughput variants
+		{"anthropic.claude-3-haiku-20240307-v1:0:48k", true, true},
+		{"anthropic.claude-3-sonnet-20240229-v1:0:200k", true, true},
 		// Nova family
 		{"amazon.nova-micro-v1:0", false, true}, // Micro is text-only
 		{"amazon.nova-lite-v1:0", true, true},
@@ -224,6 +236,116 @@ func TestModelCapabilities_KnownModels(t *testing.T) {
 			if caps.Tools != tt.expectTools {
 				t.Errorf("modelCapabilities[%q].Tools = %v, want %v",
 					tt.modelID, caps.Tools, tt.expectTools)
+			}
+		})
+	}
+}
+
+func TestBuildConverseInput_MediaContentBlocks(t *testing.T) {
+	b := &Bedrock{initted: true}
+
+	pdfData := []byte("%PDF-1.4 test content")
+	pdfB64 := base64.StdEncoding.EncodeToString(pdfData)
+
+	imgData := []byte("\x89PNG test image")
+	imgB64 := base64.StdEncoding.EncodeToString(imgData)
+
+	txtData := []byte("plain text content")
+	txtB64 := base64.StdEncoding.EncodeToString(txtData)
+
+	tests := []struct {
+		name            string
+		contentType     string
+		dataURL         string
+		wantBlockType   string // "document" or "image"
+		wantDocFormat   types.DocumentFormat
+		wantImageFormat types.ImageFormat
+	}{
+		{
+			name:          "PDF produces DocumentBlock with pdf format",
+			contentType:   "application/pdf",
+			dataURL:       "data:application/pdf;base64," + pdfB64,
+			wantBlockType: "document",
+			wantDocFormat: types.DocumentFormatPdf,
+		},
+		{
+			name:          "text/plain produces DocumentBlock with txt format",
+			contentType:   "text/plain",
+			dataURL:       "data:text/plain;base64," + txtB64,
+			wantBlockType: "document",
+			wantDocFormat: types.DocumentFormatTxt,
+		},
+		{
+			name:          "text/markdown produces DocumentBlock with md format",
+			contentType:   "text/markdown",
+			dataURL:       "data:text/markdown;base64," + txtB64,
+			wantBlockType: "document",
+			wantDocFormat: types.DocumentFormatMd,
+		},
+		{
+			name:            "image/png produces ImageBlock with png format",
+			contentType:     "image/png",
+			dataURL:         "data:image/png;base64," + imgB64,
+			wantBlockType:   "image",
+			wantImageFormat: types.ImageFormatPng,
+		},
+		{
+			name:            "image/jpeg produces ImageBlock with jpeg format",
+			contentType:     "image/jpeg",
+			dataURL:         "data:image/jpeg;base64," + imgB64,
+			wantBlockType:   "image",
+			wantImageFormat: types.ImageFormatJpeg,
+		},
+		{
+			name:            "unknown type falls back to ImageBlock with png format",
+			contentType:     "application/octet-stream",
+			dataURL:         "data:application/octet-stream;base64," + imgB64,
+			wantBlockType:   "image",
+			wantImageFormat: types.ImageFormatPng,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ai.ModelRequest{
+				Messages: []*ai.Message{
+					{
+						Role: ai.RoleUser,
+						Content: []*ai.Part{
+							ai.NewMediaPart(tt.contentType, tt.dataURL),
+						},
+					},
+				},
+			}
+
+			converseInput, err := b.buildConverseInput("anthropic.claude-3-5-sonnet-20241022-v2:0", req)
+			if err != nil {
+				t.Fatalf("buildConverseInput() error = %v", err)
+			}
+
+			if len(converseInput.Messages) == 0 || len(converseInput.Messages[0].Content) == 0 {
+				t.Fatal("expected at least one content block in the message")
+			}
+
+			block := converseInput.Messages[0].Content[0]
+
+			switch tt.wantBlockType {
+			case "document":
+				docBlock, ok := block.(*types.ContentBlockMemberDocument)
+				if !ok {
+					t.Fatalf("expected *types.ContentBlockMemberDocument, got %T", block)
+				}
+				if docBlock.Value.Format != tt.wantDocFormat {
+					t.Errorf("document format = %v, want %v", docBlock.Value.Format, tt.wantDocFormat)
+				}
+			case "image":
+				imgBlock, ok := block.(*types.ContentBlockMemberImage)
+				if !ok {
+					t.Fatalf("expected *types.ContentBlockMemberImage, got %T", block)
+				}
+				if imgBlock.Value.Format != tt.wantImageFormat {
+					t.Errorf("image format = %v, want %v", imgBlock.Value.Format, tt.wantImageFormat)
+				}
 			}
 		})
 	}

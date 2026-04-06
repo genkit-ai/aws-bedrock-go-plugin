@@ -1,4 +1,5 @@
 // Copyright 2025 Xavier Portilla Edo
+// Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -111,11 +112,20 @@ var modelCapabilities = map[string]ModelCapability{
 	"anthropic.claude-3-5-sonnet-20240620-v1:0": {Multimodal: true, Tools: true},
 	"anthropic.claude-3-5-sonnet-20241022-v2:0": {Multimodal: true, Tools: true},
 	"anthropic.claude-3-7-sonnet-20250219-v1:0": {Multimodal: true, Tools: true},
-	// Anthropic Claude 4/4.5 models
+	// Anthropic Claude 4/4.5/4.6 models
+	"anthropic.claude-haiku-4-5-20251001-v1:0":  {Multimodal: true, Tools: true},
+	"anthropic.claude-opus-4-1-20250805-v1:0":   {Multimodal: true, Tools: true},
 	"anthropic.claude-opus-4-20250514-v1:0":     {Multimodal: true, Tools: true},
 	"anthropic.claude-sonnet-4-20250514-v1:0":   {Multimodal: true, Tools: true},
 	"anthropic.claude-sonnet-4-5-20250929-v1:0": {Multimodal: true, Tools: true},
 	"anthropic.claude-opus-4-5-20251101-v1:0":   {Multimodal: true, Tools: true},
+	"anthropic.claude-sonnet-4-6":               {Multimodal: true, Tools: true},
+	"anthropic.claude-opus-4-6-v1":              {Multimodal: true, Tools: true},
+	// Provisioned-throughput variants (28k/48k/200k context)
+	"anthropic.claude-3-haiku-20240307-v1:0:48k":   {Multimodal: true, Tools: true},
+	"anthropic.claude-3-haiku-20240307-v1:0:200k":  {Multimodal: true, Tools: true},
+	"anthropic.claude-3-sonnet-20240229-v1:0:28k":  {Multimodal: true, Tools: true},
+	"anthropic.claude-3-sonnet-20240229-v1:0:200k": {Multimodal: true, Tools: true},
 	// Amazon Nova models
 	"amazon.nova-micro-v1:0":   {Multimodal: false, Tools: true},
 	"amazon.nova-lite-v1:0":    {Multimodal: true, Tools: true},
@@ -774,12 +784,11 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 					} else if part.IsMedia() {
 						// Handle media parts for multimodal models
 						mediaType := part.ContentType
-						var imageBlock *types.ContentBlockMemberImage
 
 						// Parse data URL or direct content
 						content := part.Text
 						if strings.HasPrefix(content, "data:") {
-							// Handle data URL format: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...
+							// Handle data URL format: data:image/png;base64,... or data:application/pdf;base64,...
 							parts := strings.Split(content, ",")
 							if len(parts) == 2 {
 								// Extract the actual base64 data
@@ -797,39 +806,79 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 							}
 						}
 
-						// Convert to appropriate image format based on MIME type
-						var format types.ImageFormat
-						switch mediaType {
-						case "image/png":
-							format = types.ImageFormatPng
-						case "image/jpeg", "image/jpg":
-							format = types.ImageFormatJpeg
-						case "image/gif":
-							format = types.ImageFormatGif
-						case "image/webp":
-							format = types.ImageFormatWebp
-						default:
-							// Default to PNG if unknown
-							format = types.ImageFormatPng
-						}
-
 						// Decode base64 content
-						imageData, err := base64.StdEncoding.DecodeString(content)
+						fileData, err := base64.StdEncoding.DecodeString(content)
 						if err != nil {
 							// If decoding fails, try using the content directly
-							imageData = []byte(content)
+							fileData = []byte(content)
 						}
 
-						imageBlock = &types.ContentBlockMemberImage{
-							Value: types.ImageBlock{
-								Format: format,
-								Source: &types.ImageSourceMemberBytes{
-									Value: imageData,
+						// Route to DocumentBlock for document MIME types, ImageBlock for images.
+						switch mediaType {
+						case "application/pdf":
+							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
+								Value: types.DocumentBlock{
+									Format: types.DocumentFormatPdf,
+									Name:   aws.String("document"),
+									Source: &types.DocumentSourceMemberBytes{
+										Value: fileData,
+									},
 								},
-							},
+							})
+						case "text/html":
+							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
+								Value: types.DocumentBlock{
+									Format: types.DocumentFormatHtml,
+									Name:   aws.String("document"),
+									Source: &types.DocumentSourceMemberBytes{
+										Value: fileData,
+									},
+								},
+							})
+						case "text/plain":
+							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
+								Value: types.DocumentBlock{
+									Format: types.DocumentFormatTxt,
+									Name:   aws.String("document"),
+									Source: &types.DocumentSourceMemberBytes{
+										Value: fileData,
+									},
+								},
+							})
+						case "text/markdown":
+							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
+								Value: types.DocumentBlock{
+									Format: types.DocumentFormatMd,
+									Name:   aws.String("document"),
+									Source: &types.DocumentSourceMemberBytes{
+										Value: fileData,
+									},
+								},
+							})
+						default:
+							// Treat as image — default to PNG for unknown image types
+							var format types.ImageFormat
+							switch mediaType {
+							case "image/png":
+								format = types.ImageFormatPng
+							case "image/jpeg", "image/jpg":
+								format = types.ImageFormatJpeg
+							case "image/gif":
+								format = types.ImageFormatGif
+							case "image/webp":
+								format = types.ImageFormatWebp
+							default:
+								format = types.ImageFormatPng
+							}
+							contentBlocks = append(contentBlocks, &types.ContentBlockMemberImage{
+								Value: types.ImageBlock{
+									Format: format,
+									Source: &types.ImageSourceMemberBytes{
+										Value: fileData,
+									},
+								},
+							})
 						}
-
-						contentBlocks = append(contentBlocks, imageBlock)
 					} else if part.IsToolRequest() {
 						// Handle tool request parts - convert to Bedrock ToolUse blocks
 						toolReq := part.ToolRequest
