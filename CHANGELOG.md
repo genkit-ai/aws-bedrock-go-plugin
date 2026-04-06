@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.11.1...v1.12.0) (2026-04-06)
+
+### 🚀 Features
+
+* bump versions ([648286e](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/648286e3c726e02fa8aef7beddcaf365819c1bff))
+* bump versions ([#110](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/110)) ([66a11e9](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/66a11e97c7c406a09bd2945e7defdade0dc482d9))
+
+### ⚙️ Continuous Integration
+
+* **deps:** bump actions/checkout from 4 to 6 ([#80](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/80)) ([3e1806f](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/3e1806f7531994a506388d7f9b289ab0d1cac377))
+* **deps:** bump goreleaser/goreleaser-action from 6 to 7 ([#83](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/83)) ([e77c60f](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/e77c60f68db37d710c776062aa9288e504c3c6b2))
+
 ## [1.11.1](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.11.0...v1.11.1) (2026-01-27)
 
 ### 🐛 Bug Fixes
