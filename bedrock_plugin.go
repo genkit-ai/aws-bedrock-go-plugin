@@ -814,51 +814,45 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 						}
 
 						// Route to DocumentBlock for document MIME types, ImageBlock for images.
-						switch mediaType {
+						// Strip any MIME parameters (e.g., ; charset=utf-8), normalize case and whitespace.
+						baseMediaType := strings.ToLower(strings.TrimSpace(strings.Split(mediaType, ";")[0]))
+
+						var docFormat types.DocumentFormat
+						switch baseMediaType {
 						case "application/pdf":
-							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
-								Value: types.DocumentBlock{
-									Format: types.DocumentFormatPdf,
-									Name:   aws.String("document"),
-									Source: &types.DocumentSourceMemberBytes{
-										Value: fileData,
-									},
-								},
-							})
+							docFormat = types.DocumentFormatPdf
 						case "text/html":
-							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
-								Value: types.DocumentBlock{
-									Format: types.DocumentFormatHtml,
-									Name:   aws.String("document"),
-									Source: &types.DocumentSourceMemberBytes{
-										Value: fileData,
-									},
-								},
-							})
+							docFormat = types.DocumentFormatHtml
 						case "text/plain":
-							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
-								Value: types.DocumentBlock{
-									Format: types.DocumentFormatTxt,
-									Name:   aws.String("document"),
-									Source: &types.DocumentSourceMemberBytes{
-										Value: fileData,
-									},
-								},
-							})
+							docFormat = types.DocumentFormatTxt
 						case "text/markdown":
+							docFormat = types.DocumentFormatMd
+						case "text/csv":
+							docFormat = types.DocumentFormatCsv
+						case "application/msword":
+							docFormat = types.DocumentFormatDoc
+						case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+							docFormat = types.DocumentFormatDocx
+						case "application/vnd.ms-excel":
+							docFormat = types.DocumentFormatXls
+						case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+							docFormat = types.DocumentFormatXlsx
+						}
+
+						if docFormat != "" {
 							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
 								Value: types.DocumentBlock{
-									Format: types.DocumentFormatMd,
+									Format: docFormat,
 									Name:   aws.String("document"),
 									Source: &types.DocumentSourceMemberBytes{
 										Value: fileData,
 									},
 								},
 							})
-						default:
+						} else {
 							// Treat as image — default to PNG for unknown image types
 							var format types.ImageFormat
-							switch mediaType {
+							switch baseMediaType {
 							case "image/png":
 								format = types.ImageFormatPng
 							case "image/jpeg", "image/jpg":
