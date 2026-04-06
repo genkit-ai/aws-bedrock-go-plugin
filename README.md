@@ -32,7 +32,7 @@ A comprehensive AWS Bedrock plugin for Genkit Go that provides text generation, 
 
 ### Multimodal Models (Text + Vision)
 - All Claude 3/3.5/4 models
-- Amazon Nova models
+- Amazon Nova models 
 
 ## Installation
 
