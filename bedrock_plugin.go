@@ -111,11 +111,20 @@ var modelCapabilities = map[string]ModelCapability{
 	"anthropic.claude-3-5-sonnet-20240620-v1:0": {Multimodal: true, Tools: true},
 	"anthropic.claude-3-5-sonnet-20241022-v2:0": {Multimodal: true, Tools: true},
 	"anthropic.claude-3-7-sonnet-20250219-v1:0": {Multimodal: true, Tools: true},
-	// Anthropic Claude 4/4.5 models
+	// Anthropic Claude 4/4.5/4.6 models
+	"anthropic.claude-haiku-4-5-20251001-v1:0":  {Multimodal: true, Tools: true},
+	"anthropic.claude-opus-4-1-20250805-v1:0":   {Multimodal: true, Tools: true},
 	"anthropic.claude-opus-4-20250514-v1:0":     {Multimodal: true, Tools: true},
 	"anthropic.claude-sonnet-4-20250514-v1:0":   {Multimodal: true, Tools: true},
 	"anthropic.claude-sonnet-4-5-20250929-v1:0": {Multimodal: true, Tools: true},
 	"anthropic.claude-opus-4-5-20251101-v1:0":   {Multimodal: true, Tools: true},
+	"anthropic.claude-sonnet-4-6":               {Multimodal: true, Tools: true},
+	"anthropic.claude-opus-4-6-v1":              {Multimodal: true, Tools: true},
+	// Provisioned-throughput variants (28k/48k/200k context)
+	"anthropic.claude-3-haiku-20240307-v1:0:48k":   {Multimodal: true, Tools: true},
+	"anthropic.claude-3-haiku-20240307-v1:0:200k":  {Multimodal: true, Tools: true},
+	"anthropic.claude-3-sonnet-20240229-v1:0:28k":  {Multimodal: true, Tools: true},
+	"anthropic.claude-3-sonnet-20240229-v1:0:200k": {Multimodal: true, Tools: true},
 	// Amazon Nova models
 	"amazon.nova-micro-v1:0":   {Multimodal: false, Tools: true},
 	"amazon.nova-lite-v1:0":    {Multimodal: true, Tools: true},
