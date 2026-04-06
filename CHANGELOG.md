@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.12.1...v1.13.0) (2026-04-06)
+
+### 🚀 Features
+
+* **media:** add Word, Excel, and CSV document format support ([#112](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/112)) ([2e219fa](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/2e219fab6fc3b00f92c0070f3d918fba9c2bfbd3))
+
 ## [1.12.1](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.12.0...v1.12.1) (2026-04-06)
 
 ### 🐛 Bug Fixes
