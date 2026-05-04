@@ -3,7 +3,7 @@ module github.com/xavidop/genkit-aws-bedrock-go
 go 1.24.11
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.41.6
+	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.5
 	github.com/aws/smithy-go v1.25.1
