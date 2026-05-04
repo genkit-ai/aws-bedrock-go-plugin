@@ -36,7 +36,7 @@ Error message here
 
 **Environment (please complete the following information):**
 - OS: [e.g. macOS, Linux, Windows]
-- Go version: [e.g. 1.24.1]
+- Go version: [e.g. 1.25]
 - Plugin version: [e.g. v1.0.0]
 - AWS Bedrock model: [e.g. anthropic.claude-3-sonnet-20240229-v1:0]
 - AWS Region: [e.g. us-east-1]
