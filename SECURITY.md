@@ -100,7 +100,7 @@ Our security response team consists of:
 
 This security policy applies to:
 
-- The core plugin code (`bedrock_plugin.go`)
+- The core plugin code (`bedrock.go`)
 - All example applications
 - Documentation that could impact security
 - Dependencies and their configurations
