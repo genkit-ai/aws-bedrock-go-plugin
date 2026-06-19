@@ -58,7 +58,9 @@ func TestRerankInvokesCohereRerankAndMapsScores(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"results":[{"index":1,"relevance_score":0.94},{"index":0,"relevance_score":0.42}]}`)
+		if _, err := fmt.Fprint(w, `{"results":[{"index":1,"relevance_score":0.94},{"index":0,"relevance_score":0.42}]}`); err != nil {
+			t.Errorf("failed to write mock rerank response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -139,7 +141,9 @@ func TestRerankDefaultsTopNToDocumentCount(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"results":[]}`)
+		if _, err := fmt.Fprint(w, `{"results":[]}`); err != nil {
+			t.Errorf("failed to write mock rerank response: %v", err)
+		}
 	}))
 	defer server.Close()
 
