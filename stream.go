@@ -58,8 +58,10 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 		}
 	}()
 
-	// Build final response
-	var fullText strings.Builder
+	// Accumulate streamed content. Reasoning ("thinking") deltas are tracked
+	// separately from plain text so the signed/redacted reasoning can be
+	// attached to the final response and replayed on the next turn.
+	acc := &streamAccumulator{}
 	var finalResponse *ai.ModelResponse
 	var stopReason types.StopReason
 
@@ -68,19 +70,30 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 		switch e := event.(type) {
 
 		case *types.ConverseStreamOutputMemberContentBlockDelta:
-			// Text delta received
 			deltaEvent := e.Value
-			if deltaEvent.Delta != nil {
-				if textDelta, ok := deltaEvent.Delta.(*types.ContentBlockDeltaMemberText); ok {
-					text := textDelta.Value
-					fullText.WriteString(text)
+			if deltaEvent.Delta == nil {
+				continue
+			}
+			switch delta := deltaEvent.Delta.(type) {
+			case *types.ContentBlockDeltaMemberText:
+				acc.text.WriteString(delta.Value)
+				chunk := &ai.ModelResponseChunk{
+					Index:   0,
+					Content: []*ai.Part{ai.NewTextPart(delta.Value)},
+				}
+				if err := cb(ctx, chunk); err != nil {
+					return nil, fmt.Errorf("callback error: %w", err)
+				}
 
-					// Send chunk to callback
+			case *types.ContentBlockDeltaMemberReasoningContent:
+				part, err := appendReasoningDelta(acc, delta.Value)
+				if err != nil {
+					return nil, err
+				}
+				if part != nil {
 					chunk := &ai.ModelResponseChunk{
-						Index: 0,
-						Content: []*ai.Part{
-							ai.NewTextPart(text),
-						},
+						Index:   0,
+						Content: []*ai.Part{part},
 					}
 					if err := cb(ctx, chunk); err != nil {
 						return nil, fmt.Errorf("callback error: %w", err)
@@ -95,10 +108,8 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 
 			finalResponse = &ai.ModelResponse{
 				Message: &ai.Message{
-					Role: ai.RoleModel,
-					Content: []*ai.Part{
-						ai.NewTextPart(fullText.String()),
-					},
+					Role:    ai.RoleModel,
+					Content: acc.finalContent(),
 				},
 				FinishReason: convertStopReasonToGenkit(stopReason),
 			}
@@ -113,14 +124,54 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 	if finalResponse == nil {
 		finalResponse = &ai.ModelResponse{
 			Message: &ai.Message{
-				Role: ai.RoleModel,
-				Content: []*ai.Part{
-					ai.NewTextPart(fullText.String()),
-				},
+				Role:    ai.RoleModel,
+				Content: acc.finalContent(),
 			},
 			FinishReason: ai.FinishReasonStop,
 		}
 	}
 
 	return finalResponse, nil
+}
+
+// streamAccumulator collects streamed content across delta events. The current
+// streaming path reconstructs a single text block plus any reasoning;
+// block-indexed reassembly (e.g. for streamed tool-use) is a separate concern.
+type streamAccumulator struct {
+	text               strings.Builder
+	reasoning          strings.Builder
+	reasoningSignature string
+	redactedReasoning  []byte
+}
+
+// appendReasoningDelta folds a reasoning delta into the accumulator. Text deltas
+// are accumulated and returned as an emittable chunk; signature and redacted
+// deltas are accumulated silently (nil part) since they only matter for the
+// final, replayable reasoning part.
+func appendReasoningDelta(acc *streamAccumulator, delta types.ReasoningContentBlockDelta) (*ai.Part, error) {
+	switch d := delta.(type) {
+	case *types.ReasoningContentBlockDeltaMemberText:
+		acc.reasoning.WriteString(d.Value)
+		return newBedrockReasoningPart(d.Value, "", nil), nil
+	case *types.ReasoningContentBlockDeltaMemberSignature:
+		acc.reasoningSignature = d.Value
+		return nil, nil
+	case *types.ReasoningContentBlockDeltaMemberRedactedContent:
+		acc.redactedReasoning = append(acc.redactedReasoning, d.Value...)
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("bedrock: unhandled stream reasoning delta variant %T", delta)
+	}
+}
+
+// finalContent assembles the accumulated stream state into response parts. Any
+// reasoning precedes the text so the assistant turn replays in the order
+// thinking models require.
+func (acc *streamAccumulator) finalContent() []*ai.Part {
+	var parts []*ai.Part
+	if acc.reasoning.Len() > 0 || len(acc.redactedReasoning) > 0 {
+		parts = append(parts, newBedrockReasoningPart(acc.reasoning.String(), acc.reasoningSignature, acc.redactedReasoning))
+	}
+	parts = append(parts, ai.NewTextPart(acc.text.String()))
+	return parts
 }

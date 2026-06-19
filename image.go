@@ -33,7 +33,7 @@ func (b *Bedrock) generateImage(ctx context.Context, modelName string, input *ai
 	if input == nil {
 		return nil, fmt.Errorf("model request is nil")
 	}
-	
+
 	// Extract prompt from the first message
 	var prompt string
 	if len(input.Messages) > 0 && len(input.Messages[0].Content) > 0 {

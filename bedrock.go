@@ -133,9 +133,10 @@ func (b *Bedrock) DefineModel(g *genkit.Genkit, model ModelDefinition, info *ai.
 
 	// Create model metadata
 	meta := &ai.ModelOptions{
-		Label:    provider + "-" + model.Name,
-		Supports: info.Supports,
-		Versions: info.Versions,
+		Label:        provider + "-" + model.Name,
+		Supports:     info.Supports,
+		Versions:     info.Versions,
+		ConfigSchema: configSchema(),
 	}
 
 	// Create the model function based on model type

@@ -52,7 +52,7 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 	if input == nil {
 		return nil, fmt.Errorf("model request is nil")
 	}
-	
+
 	converseInput := &bedrockruntime.ConverseInput{
 		ModelId: aws.String(modelName),
 	}
@@ -244,6 +244,12 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 								},
 							})
 						}
+					} else if part.Kind == ai.PartReasoning {
+						// Round-trip Bedrock reasoning (thinking) content so the
+						// signed text and any redacted block survive into the
+						// follow-up request. Reasoning parts without Bedrock
+						// metadata produce no blocks (see reasoningPartToContentBlocks).
+						contentBlocks = append(contentBlocks, reasoningPartToContentBlocks(part)...)
 					}
 				}
 
@@ -279,30 +285,17 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 		}
 	}
 
-	// Set inference configuration
-	if input.Config != nil {
-		if configMap, ok := input.Config.(map[string]interface{}); ok {
-			inferenceConfig := &types.InferenceConfiguration{}
-
-			if maxTokens, ok := configMap["maxOutputTokens"].(int); ok {
-				inferenceConfig.MaxTokens = aws.Int32(int32(maxTokens))
-			} else if maxTokens, ok := configMap["max_tokens"].(int); ok {
-				inferenceConfig.MaxTokens = aws.Int32(int32(maxTokens))
-			}
-
-			if temp, ok := configMap["temperature"].(float64); ok {
-				inferenceConfig.Temperature = aws.Float32(float32(temp))
-			}
-
-			if topP, ok := configMap["topP"].(float64); ok {
-				inferenceConfig.TopP = aws.Float32(float32(topP))
-			}
-
-			if stopSequences, ok := configMap["stopSequences"].([]string); ok {
-				inferenceConfig.StopSequences = stopSequences
-			}
-
+	// Set inference configuration and any model-specific request fields.
+	cfg, err := configFromRequest(input)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil {
+		if inferenceConfig := buildInferenceConfig(cfg); inferenceConfig != nil {
 			converseInput.InferenceConfig = inferenceConfig
+		}
+		if len(cfg.AdditionalModelRequestFields) > 0 {
+			converseInput.AdditionalModelRequestFields = document.NewLazyDocument(cfg.AdditionalModelRequestFields)
 		}
 	}
 
@@ -406,6 +399,13 @@ func (b *Bedrock) convertResponse(response *bedrockruntime.ConverseOutput, origi
 
 					modelResponse.Message.Content = append(modelResponse.Message.Content,
 						ai.NewToolRequestPart(toolRequest))
+
+				case *types.ContentBlockMemberReasoningContent:
+					// Reasoning ("thinking") content: carry the signed text and
+					// any redacted block so it can be replayed on the next turn.
+					if part, err := reasoningBlockToPart(block.Value); err == nil && part != nil {
+						modelResponse.Message.Content = append(modelResponse.Message.Content, part)
+					}
 				}
 			}
 		}
@@ -432,6 +432,158 @@ func (b *Bedrock) convertResponse(response *bedrockruntime.ConverseOutput, origi
 	}
 
 	return modelResponse
+}
+
+// configFromRequest decodes input.Config into a *Config. It accepts the typed
+// *Config/Config, *ai.GenerationCommonConfig/ai.GenerationCommonConfig, and the
+// historical map[string]any shape (used on resumed/serialized flows). It
+// returns (nil, nil) when no config is provided.
+func configFromRequest(input *ai.ModelRequest) (*Config, error) {
+	if input == nil || input.Config == nil {
+		return nil, nil
+	}
+	switch v := input.Config.(type) {
+	case *Config:
+		return v, nil
+	case Config:
+		return &v, nil
+	case *ai.GenerationCommonConfig:
+		return configFromGenerationCommonConfig(v), nil
+	case ai.GenerationCommonConfig:
+		return configFromGenerationCommonConfig(&v), nil
+	case map[string]interface{}:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("bedrock: marshal config: %w", err)
+		}
+		var c Config
+		if err := json.Unmarshal(b, &c); err != nil {
+			return nil, fmt.Errorf("bedrock: decode config: %w", err)
+		}
+		// Preserve the historical max-token keys, which differ from Config's
+		// json tag ("maxTokens"). The map values may decode as float64 (JSON)
+		// or int (a directly-constructed Go map).
+		if c.MaxTokens == 0 {
+			if mt, ok := mapInt(v, "maxOutputTokens"); ok {
+				c.MaxTokens = mt
+			} else if mt, ok := mapInt(v, "max_tokens"); ok {
+				c.MaxTokens = mt
+			}
+		}
+		return &c, nil
+	default:
+		return nil, fmt.Errorf("bedrock: unexpected config type %T, want *bedrock.Config, *ai.GenerationCommonConfig, or map[string]any", input.Config)
+	}
+}
+
+// mapInt reads an integer-valued key from a config map, tolerating the float64
+// that JSON-decoded numbers arrive as alongside a plain int.
+func mapInt(m map[string]interface{}, key string) (int, bool) {
+	switch v := m[key].(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+func configFromGenerationCommonConfig(v *ai.GenerationCommonConfig) *Config {
+	if v == nil {
+		return nil
+	}
+	cfg := &Config{
+		MaxTokens:     v.MaxOutputTokens,
+		StopSequences: v.StopSequences,
+	}
+	if v.Temperature != 0 {
+		t := float32(v.Temperature)
+		cfg.Temperature = &t
+	}
+	if v.TopP != 0 {
+		p := float32(v.TopP)
+		cfg.TopP = &p
+	}
+	return cfg
+}
+
+// buildInferenceConfig maps a *Config onto Bedrock's InferenceConfiguration. It
+// returns nil when nothing is set, leaving Bedrock to apply its own defaults
+// (MaxTokens is only sent when explicitly provided).
+func buildInferenceConfig(cfg *Config) *types.InferenceConfiguration {
+	if cfg == nil {
+		return nil
+	}
+	ic := &types.InferenceConfiguration{}
+	set := false
+	if cfg.MaxTokens > 0 {
+		ic.MaxTokens = aws.Int32(int32(cfg.MaxTokens))
+		set = true
+	}
+	if cfg.Temperature != nil {
+		ic.Temperature = cfg.Temperature
+		set = true
+	}
+	if cfg.TopP != nil {
+		ic.TopP = cfg.TopP
+		set = true
+	}
+	if len(cfg.StopSequences) > 0 {
+		ic.StopSequences = cfg.StopSequences
+		set = true
+	}
+	if !set {
+		return nil
+	}
+	return ic
+}
+
+// reasoningPartToContentBlocks converts a reasoning ai.Part back into Bedrock
+// reasoning content blocks. Only Bedrock-originated reasoning (carrying the
+// signature and/or redacted metadata) is emitted; a generic reasoning part
+// produces no blocks so it cannot corrupt the follow-up request.
+func reasoningPartToContentBlocks(p *ai.Part) []types.ContentBlock {
+	var blocks []types.ContentBlock
+	if redacted := metadataBytes(p.Metadata, redactedReasoningMetadataKey); len(redacted) > 0 {
+		blocks = append(blocks, &types.ContentBlockMemberReasoningContent{
+			Value: &types.ReasoningContentBlockMemberRedactedContent{Value: redacted},
+		})
+	}
+	if signature := metadataBytes(p.Metadata, reasoningSignatureMetadataKey); p.Text != "" && len(signature) > 0 {
+		blocks = append(blocks, &types.ContentBlockMemberReasoningContent{
+			Value: &types.ReasoningContentBlockMemberReasoningText{
+				Value: types.ReasoningTextBlock{
+					Text:      aws.String(p.Text),
+					Signature: aws.String(string(signature)),
+				},
+			},
+		})
+	}
+	return blocks
+}
+
+// reasoningBlockToPart converts a Bedrock reasoning content block into an ai
+// reasoning Part, or (nil, nil) when the block is empty.
+func reasoningBlockToPart(block types.ReasoningContentBlock) (*ai.Part, error) {
+	switch rc := block.(type) {
+	case *types.ReasoningContentBlockMemberReasoningText:
+		if rc.Value.Text == nil && rc.Value.Signature == nil {
+			return nil, nil
+		}
+		return newBedrockReasoningPart(aws.ToString(rc.Value.Text), aws.ToString(rc.Value.Signature), nil), nil
+	case *types.ReasoningContentBlockMemberRedactedContent:
+		if len(rc.Value) == 0 {
+			return nil, nil
+		}
+		return newBedrockReasoningPart("", "", rc.Value), nil
+	default:
+		return nil, fmt.Errorf("bedrock: unhandled reasoning content variant %T", block)
+	}
 }
 
 // convertToolInputTypes converts tool input parameters to the correct types based on the tool schema

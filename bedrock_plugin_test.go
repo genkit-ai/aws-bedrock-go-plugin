@@ -18,11 +18,15 @@
 package bedrock
 
 import (
+	"context"
 	"encoding/base64"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/genkit"
 )
 
 func TestInferModelCapabilities_WithInferenceProfiles(t *testing.T) {
@@ -184,6 +188,50 @@ func TestInferenceProfilePrefixes_Coverage(t *testing.T) {
 			t.Errorf("expected prefix %q not found in inferenceProfilePrefixes", expected)
 		}
 	}
+}
+
+func TestDefineModelRequiresInitializedPluginInstance(t *testing.T) {
+	ctx := context.Background()
+	b := &Bedrock{
+		Region: "us-east-1",
+		AWSConfig: &aws.Config{
+			Region: "us-east-1",
+			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(
+				"test-access-key",
+				"test-secret-key",
+				"",
+			)),
+		},
+	}
+	g := genkit.Init(ctx, genkit.WithPlugins(b))
+
+	if got := b.DefineModel(g, ModelDefinition{
+		Name: "anthropic.claude-3-haiku-20240307-v1:0",
+		Type: "chat",
+	}, nil); got == nil {
+		t.Fatal("DefineModel returned nil for initialized plugin")
+	}
+
+	assertPanicsWith(t, "bedrock: Init not called", func() {
+		(&Bedrock{Region: "us-east-1"}).DefineModel(g, ModelDefinition{
+			Name: "anthropic.claude-3-haiku-20240307-v1:0",
+			Type: "chat",
+		}, nil)
+	})
+}
+
+func assertPanicsWith(t *testing.T, want string, fn func()) {
+	t.Helper()
+	defer func() {
+		got := recover()
+		if got == nil {
+			t.Fatalf("expected panic %q, got none", want)
+		}
+		if got != want {
+			t.Fatalf("panic = %v, want %q", got, want)
+		}
+	}()
+	fn()
 }
 
 func TestModelCapabilities_KnownModels(t *testing.T) {

@@ -1,0 +1,198 @@
+// Copyright 2025 Xavier Portilla Edo
+// Copyright 2025 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package bedrock
+
+// Live tests exercise reasoning ("thinking") against a real Bedrock endpoint.
+// They are skipped by default and only run when the required model flags are
+// passed, e.g.:
+//
+//	go test -run TestBedrockLive_ClaudeReasoning \
+//	    -test-bedrock-region=us-east-1 \
+//	    -test-bedrock-model-claude=us.anthropic.claude-haiku-4-5-20251001-v1:0
+//
+// They require AWS credentials in the environment and model access granted in
+// the target region. Reasoning support is region- and model-scoped on Bedrock;
+// these tests validate that the plugin's request/response shape round-trips,
+// not that any particular model is granted.
+
+import (
+	"context"
+	"flag"
+	"testing"
+
+	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/genkit"
+)
+
+var (
+	testRegion      = flag.String("test-bedrock-region", "", "AWS region for Bedrock live tests (e.g. us-east-1)")
+	testModelClaude = flag.String("test-bedrock-model-claude", "", "Thinking-capable Claude model ID (e.g. us.anthropic.claude-haiku-4-5-20251001-v1:0)")
+)
+
+// reasoningBudgetTokens is the extended-thinking budget. Bedrock requires it to
+// be at least 1024, and MaxTokens must exceed it.
+const reasoningBudgetTokens = 1024
+
+// requireLiveClaude asserts the live-test prerequisites and skips otherwise. It
+// returns a Genkit instance with the Bedrock plugin and a defined Claude model.
+func requireLiveClaude(t *testing.T) (context.Context, *genkit.Genkit, ai.Model) {
+	t.Helper()
+	if *testRegion == "" {
+		t.Skip("bedrock live tests skipped; pass -test-bedrock-region=<region>")
+	}
+	if *testModelClaude == "" {
+		t.Skip("pass -test-bedrock-model-claude=<thinking-capable-model-id> to run")
+	}
+	ctx := context.Background()
+	pb := &Bedrock{Region: *testRegion}
+	g := genkit.Init(ctx, genkit.WithPlugins(pb))
+	m := pb.DefineModel(g, ModelDefinition{
+		Name: *testModelClaude,
+		Type: "chat",
+	}, nil)
+	return ctx, g, m
+}
+
+// thinkingConfig enables Claude extended thinking via AdditionalModelRequestFields.
+// Temperature is intentionally left unset — Bedrock rejects thinking requests
+// that also set a custom temperature.
+func thinkingConfig() *Config {
+	return &Config{
+		MaxTokens: reasoningBudgetTokens + 1024,
+		AdditionalModelRequestFields: map[string]any{
+			"thinking": map[string]any{
+				"type":          "enabled",
+				"budget_tokens": reasoningBudgetTokens,
+			},
+		},
+	}
+}
+
+// firstReasoning returns the first reasoning part in a message, or nil.
+func firstReasoning(msg *ai.Message) *ai.Part {
+	if msg == nil {
+		return nil
+	}
+	for _, p := range msg.Content {
+		if p.IsReasoning() {
+			return p
+		}
+	}
+	return nil
+}
+
+// TestBedrockLive_ClaudeReasoningSync confirms a thinking-enabled request comes
+// back with a signed reasoning part, and that the plain text answer is still
+// surfaced via Text() (i.e. reasoning doesn't leak into normal output).
+func TestBedrockLive_ClaudeReasoningSync(t *testing.T) {
+	ctx, g, m := requireLiveClaude(t)
+
+	resp, err := genkit.Generate(ctx, g,
+		ai.WithModel(m),
+		ai.WithPrompt("What is 17 * 24? Think it through step by step, then give the answer."),
+		ai.WithConfig(thinkingConfig()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reasoning := firstReasoning(resp.Message)
+	if reasoning == nil {
+		t.Fatal("expected a reasoning part in the response; got none")
+	}
+	if sig := metadataBytes(reasoning.Metadata, reasoningSignatureMetadataKey); len(sig) == 0 {
+		t.Error("reasoning part is missing its Bedrock signature")
+	}
+	if resp.Text() == "" {
+		t.Error("final response text is empty")
+	}
+}
+
+// TestBedrockLive_ClaudeReasoningRoundTrip is the real proof of the feature: it
+// feeds a thinking response back as conversation history and confirms the
+// follow-up turn is accepted. If the signed/redacted reasoning weren't
+// round-tripped verbatim, Bedrock rejects the request.
+func TestBedrockLive_ClaudeReasoningRoundTrip(t *testing.T) {
+	ctx, g, m := requireLiveClaude(t)
+
+	turn1 := ai.NewUserTextMessage("What is 17 * 24? Show your reasoning, then state the result.")
+	resp1, err := genkit.Generate(ctx, g,
+		ai.WithModel(m),
+		ai.WithMessages(turn1),
+		ai.WithConfig(thinkingConfig()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstReasoning(resp1.Message) == nil {
+		t.Fatal("first turn produced no reasoning part; cannot exercise round-trip")
+	}
+
+	// Replay the assistant turn (reasoning included) plus a follow-up question.
+	resp2, err := genkit.Generate(ctx, g,
+		ai.WithModel(m),
+		ai.WithMessages(
+			turn1,
+			resp1.Message,
+			ai.NewUserTextMessage("Now multiply that result by 2."),
+		),
+		ai.WithConfig(thinkingConfig()),
+	)
+	if err != nil {
+		t.Fatalf("follow-up turn rejected (reasoning round-trip likely broken): %v", err)
+	}
+	if resp2.Text() == "" {
+		t.Error("follow-up response text is empty")
+	}
+}
+
+// TestBedrockLive_ClaudeReasoningStream confirms reasoning deltas stream through
+// to the callback and the final response carries an assembled reasoning part.
+func TestBedrockLive_ClaudeReasoningStream(t *testing.T) {
+	ctx, g, m := requireLiveClaude(t)
+
+	var reasoningChunks, textChunks int
+	resp, err := genkit.Generate(ctx, g,
+		ai.WithModel(m),
+		ai.WithPrompt("What is 17 * 24? Think it through, then answer."),
+		ai.WithConfig(thinkingConfig()),
+		ai.WithStreaming(func(ctx context.Context, c *ai.ModelResponseChunk) error {
+			for _, p := range c.Content {
+				switch {
+				case p.IsReasoning():
+					reasoningChunks++
+				case p.IsText():
+					textChunks++
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reasoningChunks == 0 {
+		t.Error("expected at least one reasoning chunk")
+	}
+	if firstReasoning(resp.Message) == nil {
+		t.Error("final response is missing the assembled reasoning part")
+	}
+	if resp.Text() == "" {
+		t.Error("final response text is empty")
+	}
+}
