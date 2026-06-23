@@ -326,6 +326,10 @@ func DefineCommonEmbedders(b *Bedrock, g *genkit.Genkit) map[string]ai.Embedder 
 	cohereMultilingual := b.DefineEmbedder(g, "cohere.embed-multilingual-v3")
 	embedders["cohere-multilingual"] = cohereMultilingual
 
+	// Amazon Nova Embeddings
+	novaEmbed := b.DefineEmbedder(g, "amazon.nova-embed-text-v1:0")
+	embedders["nova-embed"] = novaEmbed
+
 	return embedders
 }
 
