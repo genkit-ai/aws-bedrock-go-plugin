@@ -1064,7 +1064,7 @@ func TestBuildConverseInput_ToolChoiceIgnoredWithoutTools(t *testing.T) {
 	}
 }
 
-func TestBuildConverseInput_ToolChoiceNoneIgnored(t *testing.T) {
+func TestBuildConverseInput_ToolChoiceNone(t *testing.T) {
 	b := &Bedrock{}
 	req := toolReq()
 	req.Config = &Config{ToolChoice: ToolChoiceNone}
@@ -1072,10 +1072,7 @@ func TestBuildConverseInput_ToolChoiceNoneIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.ToolConfig == nil {
-		t.Fatal("ToolConfig is nil")
-	}
-	if out.ToolConfig.ToolChoice != nil {
-		t.Errorf("ToolChoice = %v, want nil for ToolChoiceNone", out.ToolConfig.ToolChoice)
+	if out.ToolConfig != nil {
+		t.Errorf("ToolConfig = %v, want nil for ToolChoiceNone", out.ToolConfig)
 	}
 }

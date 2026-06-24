@@ -327,7 +327,9 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 		}
 	}
 
-	if cfg != nil && cfg.ToolChoice != "" && cfg.ToolChoice != ToolChoiceNone && converseInput.ToolConfig != nil {
+	if cfg != nil && cfg.ToolChoice == ToolChoiceNone {
+		converseInput.ToolConfig = nil
+	} else if cfg != nil && cfg.ToolChoice != "" && converseInput.ToolConfig != nil {
 		converseInput.ToolConfig.ToolChoice = buildToolChoice(cfg.ToolChoice)
 	}
 
