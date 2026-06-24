@@ -327,6 +327,12 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 		}
 	}
 
+	if cfg != nil && cfg.ToolChoice == ToolChoiceNone {
+		converseInput.ToolConfig = nil
+	} else if cfg != nil && cfg.ToolChoice != "" && converseInput.ToolConfig != nil {
+		converseInput.ToolConfig.ToolChoice = buildToolChoice(cfg.ToolChoice)
+	}
+
 	return converseInput, nil
 }
 
@@ -541,6 +547,21 @@ func buildInferenceConfig(cfg *Config) *types.InferenceConfiguration {
 		return nil
 	}
 	return ic
+}
+
+// buildToolChoice maps a ToolChoice string constant to the Bedrock union type.
+// The caller is responsible for ensuring choice is non-empty and not ToolChoiceNone.
+func buildToolChoice(choice string) types.ToolChoice {
+	switch choice {
+	case ToolChoiceAuto:
+		return &types.ToolChoiceMemberAuto{}
+	case ToolChoiceRequired, "any":
+		return &types.ToolChoiceMemberAny{}
+	default:
+		return &types.ToolChoiceMemberTool{
+			Value: types.SpecificToolChoice{Name: aws.String(choice)},
+		}
+	}
 }
 
 // reasoningPartToContentBlocks converts a reasoning ai.Part back into Bedrock

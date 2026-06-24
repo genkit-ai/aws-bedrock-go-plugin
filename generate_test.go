@@ -942,3 +942,137 @@ func TestGenerateTextSync_BasicRoundTrip(t *testing.T) {
 		t.Errorf("Usage = %v, want TotalTokens=7", resp.Usage)
 	}
 }
+
+// ---- buildToolChoice --------------------------------------------------------
+
+func TestBuildToolChoice(t *testing.T) {
+	tests := []struct {
+		choice   string
+		wantType string
+		wantName string // only checked for ToolChoiceMemberTool
+	}{
+		{ToolChoiceAuto, "*types.ToolChoiceMemberAuto", ""},
+		{ToolChoiceRequired, "*types.ToolChoiceMemberAny", ""},
+		{"any", "*types.ToolChoiceMemberAny", ""},
+		{"get_weather", "*types.ToolChoiceMemberTool", "get_weather"},
+		{"my_custom_tool", "*types.ToolChoiceMemberTool", "my_custom_tool"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.choice, func(t *testing.T) {
+			got := buildToolChoice(tc.choice)
+			switch tc.wantType {
+			case "*types.ToolChoiceMemberAuto":
+				if _, ok := got.(*types.ToolChoiceMemberAuto); !ok {
+					t.Errorf("buildToolChoice(%q) type = %T, want *ToolChoiceMemberAuto", tc.choice, got)
+				}
+			case "*types.ToolChoiceMemberAny":
+				if _, ok := got.(*types.ToolChoiceMemberAny); !ok {
+					t.Errorf("buildToolChoice(%q) type = %T, want *ToolChoiceMemberAny", tc.choice, got)
+				}
+			case "*types.ToolChoiceMemberTool":
+				tool, ok := got.(*types.ToolChoiceMemberTool)
+				if !ok {
+					t.Fatalf("buildToolChoice(%q) type = %T, want *ToolChoiceMemberTool", tc.choice, got)
+				}
+				if aws.ToString(tool.Value.Name) != tc.wantName {
+					t.Errorf("tool name = %q, want %q", aws.ToString(tool.Value.Name), tc.wantName)
+				}
+			}
+		})
+	}
+}
+
+// ---- buildConverseInput ToolChoice wiring -----------------------------------
+
+func toolReq() *ai.ModelRequest {
+	return &ai.ModelRequest{
+		Messages: []*ai.Message{
+			{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("use a tool")}},
+		},
+		Tools: []*ai.ToolDefinition{
+			{Name: "get_weather", Description: "weather", InputSchema: map[string]any{"type": "object"}},
+		},
+	}
+}
+
+func TestBuildConverseInput_ToolChoiceAuto(t *testing.T) {
+	b := &Bedrock{}
+	req := toolReq()
+	req.Config = &Config{ToolChoice: ToolChoiceAuto}
+	out, err := b.buildConverseInput("model-id", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ToolConfig == nil {
+		t.Fatal("ToolConfig is nil")
+	}
+	if _, ok := out.ToolConfig.ToolChoice.(*types.ToolChoiceMemberAuto); !ok {
+		t.Errorf("ToolChoice type = %T, want *ToolChoiceMemberAuto", out.ToolConfig.ToolChoice)
+	}
+}
+
+func TestBuildConverseInput_ToolChoiceRequired(t *testing.T) {
+	b := &Bedrock{}
+	req := toolReq()
+	req.Config = &Config{ToolChoice: ToolChoiceRequired}
+	out, err := b.buildConverseInput("model-id", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ToolConfig == nil {
+		t.Fatal("ToolConfig is nil")
+	}
+	if _, ok := out.ToolConfig.ToolChoice.(*types.ToolChoiceMemberAny); !ok {
+		t.Errorf("ToolChoice type = %T, want *ToolChoiceMemberAny", out.ToolConfig.ToolChoice)
+	}
+}
+
+func TestBuildConverseInput_ToolChoiceNamedTool(t *testing.T) {
+	b := &Bedrock{}
+	req := toolReq()
+	req.Config = &Config{ToolChoice: "get_weather"}
+	out, err := b.buildConverseInput("model-id", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ToolConfig == nil {
+		t.Fatal("ToolConfig is nil")
+	}
+	specific, ok := out.ToolConfig.ToolChoice.(*types.ToolChoiceMemberTool)
+	if !ok {
+		t.Fatalf("ToolChoice type = %T, want *ToolChoiceMemberTool", out.ToolConfig.ToolChoice)
+	}
+	if aws.ToString(specific.Value.Name) != "get_weather" {
+		t.Errorf("tool name = %q, want get_weather", aws.ToString(specific.Value.Name))
+	}
+}
+
+func TestBuildConverseInput_ToolChoiceIgnoredWithoutTools(t *testing.T) {
+	b := &Bedrock{}
+	out, err := b.buildConverseInput("model-id", &ai.ModelRequest{
+		Messages: []*ai.Message{
+			{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("hello")}},
+		},
+		Config: &Config{ToolChoice: ToolChoiceAuto},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ToolConfig != nil {
+		t.Errorf("ToolConfig = %v, want nil when no tools provided", out.ToolConfig)
+	}
+}
+
+func TestBuildConverseInput_ToolChoiceNone(t *testing.T) {
+	b := &Bedrock{}
+	req := toolReq()
+	req.Config = &Config{ToolChoice: ToolChoiceNone}
+	out, err := b.buildConverseInput("model-id", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ToolConfig != nil {
+		t.Errorf("ToolConfig = %v, want nil for ToolChoiceNone", out.ToolConfig)
+	}
+}
