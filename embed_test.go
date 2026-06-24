@@ -658,6 +658,30 @@ func TestImageFromDocument(t *testing.T) {
 			wantMIME:   "image/png",
 			wantBase64: fakeImageBase64,
 		},
+		{
+			name: "PNG image with empty ContentType",
+			doc: &ai.Document{Content: []*ai.Part{
+				ai.NewMediaPart("", "data:image/png;base64,"+fakeImageBase64),
+			}},
+			wantMIME:   "image/png",
+			wantBase64: fakeImageBase64,
+		},
+		{
+			name: "JPEG image with empty ContentType",
+			doc: &ai.Document{Content: []*ai.Part{
+				ai.NewMediaPart("", "data:image/jpeg;base64,"+fakeImageBase64),
+			}},
+			wantMIME:   "image/jpeg",
+			wantBase64: fakeImageBase64,
+		},
+		{
+			name: "non-image data URL with empty ContentType is ignored",
+			doc: &ai.Document{Content: []*ai.Part{
+				ai.NewMediaPart("", "data:application/pdf;base64,"+fakeImageBase64),
+			}},
+			wantMIME:   "",
+			wantBase64: "",
+		},
 	}
 
 	for _, tt := range tests {

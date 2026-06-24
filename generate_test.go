@@ -891,11 +891,13 @@ func TestGenerateTextSync_BasicRoundTrip(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.EscapedPath()
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("unmarshal request body: %v", err)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		// Minimal valid ConverseOutput shape.
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"output":     {"message":{"role":"assistant","content":[{"text":"pong"}]}},
 			"stopReason": "end_turn",
 			"usage":      {"inputTokens":5,"outputTokens":2,"totalTokens":7}

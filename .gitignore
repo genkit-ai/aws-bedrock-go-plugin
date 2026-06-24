@@ -58,3 +58,5 @@ tmp/
 temp/
 
 .genkit/
+
+.claude/

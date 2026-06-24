@@ -519,11 +519,19 @@ func imageFromDocument(doc *ai.Document) (mimeType, base64Data string) {
 		if part == nil || !part.IsMedia() {
 			continue
 		}
+		dataURL := part.Text
 		mt := strings.ToLower(strings.TrimSpace(strings.SplitN(part.ContentType, ";", 2)[0]))
+		// Fall back to the MIME type embedded in the data URL when ContentType is
+		// absent — mirrors the same logic in generate.go's media-part handling.
+		if mt == "" && strings.HasPrefix(dataURL, "data:") {
+			if header, _, ok := strings.Cut(dataURL, ","); ok {
+				mimeAndParams, _, _ := strings.Cut(header, ";")
+				mt = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(mimeAndParams, "data:")))
+			}
+		}
 		if !strings.HasPrefix(mt, "image/") {
 			continue
 		}
-		dataURL := part.Text
 		// Strip the data URL header (data:image/png;base64,) to get raw base64.
 		// If there is no comma the value is not a data URL; skip this part
 		// rather than passing the whole string as base64 to the API.
