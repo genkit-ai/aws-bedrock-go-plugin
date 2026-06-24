@@ -101,9 +101,10 @@ type Config struct {
 	// StopSequences are strings that, when generated, halt generation.
 	StopSequences []string `json:"stopSequences,omitempty"`
 
-	// ToolChoice selects how the model should pick tools. It is accepted here
-	// for forward compatibility; wiring it through the Converse request is a
-	// separate change and it is currently not applied.
+	// ToolChoice controls how the model selects tools. Use ToolChoiceAuto to let
+	// the model decide, ToolChoiceRequired to force tool use, or a specific tool
+	// name (e.g. "get_weather") to require exactly that tool. Has no effect when
+	// no tools are registered on the request.
 	ToolChoice string `json:"toolChoice,omitempty"`
 
 	// AdditionalModelRequestFields is forwarded verbatim as the Converse API's
