@@ -585,10 +585,10 @@ func TestEmbedNova_SingleDocument(t *testing.T) {
 
 func TestImageFromDocument(t *testing.T) {
 	tests := []struct {
-		name        string
-		doc         *ai.Document
-		wantMIME    string
-		wantBase64  string
+		name       string
+		doc        *ai.Document
+		wantMIME   string
+		wantBase64 string
 	}{
 		{
 			name:       "nil document",
