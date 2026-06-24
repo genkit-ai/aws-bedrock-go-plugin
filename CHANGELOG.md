@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.16.1...v1.17.0) (2026-06-24)
+
+### 🚀 Features
+
+* **embed:** extend embeddings to all Bedrock model families ([#148](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/148)) ([9391bf6](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/9391bf625ac2664bd7d65f010f01005beb409ee8))
+
 ## [1.16.1](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.16.0...v1.16.1) (2026-06-22)
 
 ### ⚙️ Continuous Integration
