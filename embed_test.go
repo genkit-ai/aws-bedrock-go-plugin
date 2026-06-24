@@ -134,9 +134,11 @@ func TestEmbedTitanText_SingleDocument(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, titanTextResp(want))
+		_, _ = fmt.Fprint(w, titanTextResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -164,7 +166,7 @@ func TestEmbedTitanText_MultipleDocumentsOrdered(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, titanTextResp([]float32{0.1, 0.2}))
+		_, _ = fmt.Fprint(w, titanTextResp([]float32{0.1, 0.2}))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -213,9 +215,11 @@ func TestEmbedTitanMultimodal_TextOnly(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, titanTextResp(want))
+		_, _ = fmt.Fprint(w, titanTextResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -243,9 +247,11 @@ func TestEmbedTitanMultimodal_ImageOnly(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, titanTextResp(want))
+		_, _ = fmt.Fprint(w, titanTextResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -276,9 +282,11 @@ func TestEmbedTitanMultimodal_TextAndImage(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, titanTextResp(want))
+		_, _ = fmt.Fprint(w, titanTextResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -345,9 +353,11 @@ func TestEmbedCohere_TextBatch(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, cohereTypedResp(want))
+		_, _ = fmt.Fprint(w, cohereTypedResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -386,7 +396,7 @@ func TestEmbedCohere_MultilingualTextBatch(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, cohereTypedResp(want))
+		_, _ = fmt.Fprint(w, cohereTypedResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -408,9 +418,11 @@ func TestEmbedCohere_ImageDocument(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, cohereTypedResp(want))
+		_, _ = fmt.Fprint(w, cohereTypedResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -446,18 +458,18 @@ func TestEmbedCohere_MixedTextAndImageDocumentsOrdered(t *testing.T) {
 	textEmbs := [][]float32{{0.1, 0.2}, {0.3, 0.4}}
 	imgEmb := [][]float32{{0.9, 0.8}}
 
-	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		raw, _ := io.ReadAll(r.Body)
-		json.Unmarshal(raw, &body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if body["input_type"] == "search_document" {
-			fmt.Fprint(w, cohereTypedResp(textEmbs))
+			_, _ = fmt.Fprint(w, cohereTypedResp(textEmbs))
 		} else {
-			fmt.Fprint(w, cohereTypedResp(imgEmb))
+			_, _ = fmt.Fprint(w, cohereTypedResp(imgEmb))
 		}
-		callCount++
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)
@@ -560,9 +572,11 @@ func TestEmbedNova_SingleDocument(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &gotBody)
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("json.Unmarshal: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, titanTextResp(want))
+		_, _ = fmt.Fprint(w, titanTextResp(want))
 	}))
 	defer server.Close()
 	b := newTestBedrock(server)

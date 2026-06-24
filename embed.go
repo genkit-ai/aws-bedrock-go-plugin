@@ -58,17 +58,29 @@ func (b *Bedrock) embed(ctx context.Context, modelName string, req *ai.EmbedRequ
 	}
 }
 
+// embedConcurrencyLimit caps the number of simultaneous InvokeModel calls to
+// avoid AWS Bedrock ThrottlingException under large document batches.
+const embedConcurrencyLimit = 10
+
 // embedTitanText embeds documents using Amazon Titan text embedding models.
 // Documents are processed concurrently; results are reassembled in original order.
 func (b *Bedrock) embedTitanText(ctx context.Context, modelName string, req *ai.EmbedRequest) (*ai.EmbedResponse, error) {
 	embeddings := make([]*ai.Embedding, len(req.Input))
 	errs := make([]error, len(req.Input))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, embedConcurrencyLimit)
 
 	for i, doc := range req.Input {
 		wg.Add(1)
 		go func(idx int, d *ai.Document) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				errs[idx] = ctx.Err()
+				return
+			}
 			if d == nil {
 				errs[idx] = fmt.Errorf("embed: document %d is nil", idx)
 				return
@@ -106,11 +118,19 @@ func (b *Bedrock) embedTitanMultimodal(ctx context.Context, modelName string, re
 	embeddings := make([]*ai.Embedding, len(req.Input))
 	errs := make([]error, len(req.Input))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, embedConcurrencyLimit)
 
 	for i, doc := range req.Input {
 		wg.Add(1)
 		go func(idx int, d *ai.Document) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				errs[idx] = ctx.Err()
+				return
+			}
 			if d == nil {
 				errs[idx] = fmt.Errorf("embed: document %d is nil", idx)
 				return
@@ -176,21 +196,24 @@ func (b *Bedrock) embedCohere(ctx context.Context, modelName string, req *ai.Emb
 
 	embeddings := make([]*ai.Embedding, len(req.Input))
 
-	// Batch text documents in a single API call.
-	if len(textSlots) > 0 {
-		texts := make([]string, len(textSlots))
-		for i, s := range textSlots {
-			texts[i] = s.content
+	// Batch text documents in API calls of up to 96 documents (Bedrock Cohere limit).
+	const cohereTextBatchSize = 96
+	for i := 0; i < len(textSlots); i += cohereTextBatchSize {
+		end := min(i+cohereTextBatchSize, len(textSlots))
+		chunk := textSlots[i:end]
+		texts := make([]string, len(chunk))
+		for j, s := range chunk {
+			texts[j] = s.content
 		}
 		batch, err := b.getCohereTextEmbeddings(ctx, modelName, texts)
 		if err != nil {
 			return nil, fmt.Errorf("embed: Cohere text batch: %w", err)
 		}
-		if len(batch) != len(textSlots) {
-			return nil, fmt.Errorf("embed: Cohere returned %d text embeddings for %d inputs", len(batch), len(textSlots))
+		if len(batch) != len(chunk) {
+			return nil, fmt.Errorf("embed: Cohere returned %d text embeddings for %d inputs", len(batch), len(chunk))
 		}
-		for i, s := range textSlots {
-			embeddings[s.idx] = &ai.Embedding{Embedding: batch[i]}
+		for j, s := range chunk {
+			embeddings[s.idx] = &ai.Embedding{Embedding: batch[j]}
 		}
 	}
 
@@ -199,18 +222,26 @@ func (b *Bedrock) embedCohere(ctx context.Context, modelName string, req *ai.Emb
 		imgEmbs := make([][]float32, len(imageSlots))
 		imgErrs := make([]error, len(imageSlots))
 		var wg sync.WaitGroup
+		sem := make(chan struct{}, embedConcurrencyLimit)
 
 		for i, s := range imageSlots {
 			wg.Add(1)
 			go func(batchIdx int, imgBase64 string) {
 				defer wg.Done()
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					imgErrs[batchIdx] = ctx.Err()
+					return
+				}
 				batch, err := b.getCohereImageEmbeddings(ctx, modelName, []string{imgBase64})
 				if err != nil {
 					imgErrs[batchIdx] = err
 					return
 				}
 				if len(batch) == 0 {
-					imgErrs[batchIdx] = fmt.Errorf("Cohere returned no embedding for image")
+					imgErrs[batchIdx] = fmt.Errorf("cohere returned no embedding for image")
 					return
 				}
 				imgEmbs[batchIdx] = batch[0]
@@ -237,11 +268,19 @@ func (b *Bedrock) embedNova(ctx context.Context, modelName string, req *ai.Embed
 	embeddings := make([]*ai.Embedding, len(req.Input))
 	errs := make([]error, len(req.Input))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, embedConcurrencyLimit)
 
 	for i, doc := range req.Input {
 		wg.Add(1)
 		go func(idx int, d *ai.Document) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				errs[idx] = ctx.Err()
+				return
+			}
 			if d == nil {
 				errs[idx] = fmt.Errorf("embed: document %d is nil", idx)
 				return
@@ -433,7 +472,7 @@ func decodeCohereEmbeddings(body []byte) ([][]float32, error) {
 		return nil, fmt.Errorf("parse Cohere response: %w", err)
 	}
 	if len(outer.Embeddings) == 0 {
-		return nil, fmt.Errorf("Cohere response missing embeddings field")
+		return nil, fmt.Errorf("cohere response missing embeddings field")
 	}
 
 	// Typed format: {"float": [[...], ...]}
@@ -441,7 +480,11 @@ func decodeCohereEmbeddings(body []byte) ([][]float32, error) {
 	// meaningful byte — json.RawMessage preserves bytes verbatim from the
 	// parent document, so leading whitespace is possible with pretty-printed
 	// responses.
-	if bytes.TrimLeft(outer.Embeddings, " \t\r\n")[0] == '{' {
+	trimmed := bytes.TrimLeft(outer.Embeddings, " \t\r\n")
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("cohere embeddings field is empty")
+	}
+	if trimmed[0] == '{' {
 		var typed struct {
 			Float [][]float32 `json:"float"`
 		}
@@ -449,7 +492,7 @@ func decodeCohereEmbeddings(body []byte) ([][]float32, error) {
 			return nil, fmt.Errorf("parse Cohere typed embeddings: %w", err)
 		}
 		if len(typed.Float) == 0 {
-			return nil, fmt.Errorf("Cohere typed response has no float embeddings")
+			return nil, fmt.Errorf("cohere typed response has no float embeddings")
 		}
 		return typed.Float, nil
 	}
@@ -460,7 +503,7 @@ func decodeCohereEmbeddings(body []byte) ([][]float32, error) {
 		return nil, fmt.Errorf("parse Cohere flat embeddings: %w", err)
 	}
 	if len(flat) == 0 {
-		return nil, fmt.Errorf("Cohere returned no embeddings")
+		return nil, fmt.Errorf("cohere returned no embeddings")
 	}
 	return flat, nil
 }
