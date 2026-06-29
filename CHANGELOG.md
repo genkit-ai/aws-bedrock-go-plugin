@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.1](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.19.0...v1.19.1) (2026-06-29)
+
+### ⚙️ Continuous Integration
+
+* **deps:** bump actions/cache from 5 to 6 ([#150](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/150)) ([375c0dc](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/375c0dccd8d1ec2863ec26dbc77ee9882fae8c0e))
+
 ## [1.19.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.18.0...v1.19.0) (2026-06-29)
 
 ### 🚀 Features
