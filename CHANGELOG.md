@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.19.1...v1.20.0) (2026-06-29)
+
+### 🚀 Features
+
+* **generate:** improve Converse request/response conversion ([#154](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/154)) ([6a9f8b3](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/6a9f8b3b963cbfa5c808a327f812416921078896))
+
 ## [1.19.1](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.19.0...v1.19.1) (2026-06-29)
 
 ### ⚙️ Continuous Integration
