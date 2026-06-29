@@ -198,6 +198,18 @@ bedrockPlugin := &bedrock.Bedrock{
 | `RequestTimeout` | `time.Duration` | `30s` | Request timeout |
 | `AWSConfig` | `*aws.Config` | `nil` | Custom AWS configuration |
 
+### Generation Configuration
+
+Pass `bedrock.Config` with `ai.WithConfig` for Converse model calls.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `MaxTokens` | `4096` | Maximum response tokens. Bedrock requires this for most Converse models. |
+| `Temperature` | model default | Sampling randomness. |
+| `TopP` | model default | Nucleus sampling cutoff. |
+| `StopSequences` | none | Strings that stop generation. |
+| `ToolChoice` | model default | `"auto"`, `"any"`, `"required"`, `"none"`, or a specific tool name. |
+| `AdditionalModelRequestFields` | nil | Model-specific Converse fields such as Claude thinking options. |
 
 ## AWS Setup and Authentication
 
@@ -299,10 +311,15 @@ go run main.go
 - **Error Handling**: Robust error handling and fallbacks
 
 ### 🖼️ Image Support  
-- **Input**: Supports base64 data URLs and binary data
+- **Input**: Supports base64 data URLs or bare base64 with a supported MIME type
 - **Output**: Returns images as base64 data URLs
 - **Formats**: PNG, JPEG, WebP, GIF support
 - **Vision**: Text + image inputs for multimodal models
+
+Generation media inputs are validated before calling Bedrock. Remote URLs,
+raw non-base64 content, missing content types, and unknown MIME types are
+rejected with a clear error. Supported document MIME types are PDF, CSV, DOC,
+DOCX, XLS, XLSX, HTML, plain text, and Markdown.
 
 ### 📡 Streaming
 - **Real-time**: Token-by-token streaming responses

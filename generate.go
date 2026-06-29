@@ -18,9 +18,11 @@
 package bedrock
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -32,6 +34,8 @@ import (
 	smithydoc "github.com/aws/smithy-go/document"
 	"github.com/firebase/genkit/go/ai"
 )
+
+const defaultMaxTokens = 4096
 
 // generateText handles text generation using Bedrock Converse API
 func (b *Bedrock) generateText(ctx context.Context, modelName string, input *ai.ModelRequest, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
@@ -53,247 +57,32 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 		return nil, fmt.Errorf("model request is nil")
 	}
 
-	converseInput := &bedrockruntime.ConverseInput{
-		ModelId: aws.String(modelName),
-	}
-
-	// Convert messages
-	if len(input.Messages) > 0 {
-		var messages []types.Message
-		var systemPrompts []types.SystemContentBlock
-
-		for _, msg := range input.Messages {
-			switch msg.Role {
-			case ai.RoleSystem:
-				// System messages go into separate field
-				for _, part := range msg.Content {
-					if part.IsText() {
-						systemPrompts = append(systemPrompts, &types.SystemContentBlockMemberText{
-							Value: part.Text,
-						})
-					} else if part.IsCustom() {
-						// Handle custom parts, the plugin currently supports NewCachePointPart
-						if cpt, ok := CachePointType(part); ok {
-							systemPrompts = append(systemPrompts, &types.SystemContentBlockMemberCachePoint{
-								Value: types.CachePointBlock{
-									Type: cpt,
-								},
-							})
-						}
-					}
-				}
-			case ai.RoleUser, ai.RoleModel, ai.RoleTool:
-				// Convert message content
-				var contentBlocks []types.ContentBlock
-				for _, part := range msg.Content {
-					if part.IsText() {
-						contentBlocks = append(contentBlocks, &types.ContentBlockMemberText{
-							Value: part.Text,
-						})
-					} else if part.IsMedia() {
-						// Handle media parts for multimodal models
-						mediaType := part.ContentType
-
-						// Parse data URL or direct content
-						content := part.Text
-						if strings.HasPrefix(content, "data:") {
-							// Handle data URL format: data:image/png;base64,... or data:application/pdf;base64,...
-							parts := strings.Split(content, ",")
-							if len(parts) == 2 {
-								// Extract the actual base64 data
-								content = parts[1]
-								// Extract MIME type from data URL if not already set
-								if mediaType == "" {
-									urlParts := strings.Split(parts[0], ":")
-									if len(urlParts) > 1 {
-										mimeAndEncoding := strings.Split(urlParts[1], ";")
-										if len(mimeAndEncoding) > 0 {
-											mediaType = mimeAndEncoding[0]
-										}
-									}
-								}
-							}
-						}
-
-						// Decode base64 content
-						fileData, err := base64.StdEncoding.DecodeString(content)
-						if err != nil {
-							// If decoding fails, try using the content directly
-							fileData = []byte(content)
-						}
-
-						// Route to DocumentBlock for document MIME types, ImageBlock for images.
-						// Strip any MIME parameters (e.g., ; charset=utf-8), normalize case and whitespace.
-						baseMediaType := strings.ToLower(strings.TrimSpace(strings.Split(mediaType, ";")[0]))
-
-						var docFormat types.DocumentFormat
-						switch baseMediaType {
-						case "application/pdf":
-							docFormat = types.DocumentFormatPdf
-						case "text/html":
-							docFormat = types.DocumentFormatHtml
-						case "text/plain":
-							docFormat = types.DocumentFormatTxt
-						case "text/markdown":
-							docFormat = types.DocumentFormatMd
-						case "text/csv":
-							docFormat = types.DocumentFormatCsv
-						case "application/msword":
-							docFormat = types.DocumentFormatDoc
-						case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-							docFormat = types.DocumentFormatDocx
-						case "application/vnd.ms-excel":
-							docFormat = types.DocumentFormatXls
-						case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-							docFormat = types.DocumentFormatXlsx
-						}
-
-						if docFormat != "" {
-							contentBlocks = append(contentBlocks, &types.ContentBlockMemberDocument{
-								Value: types.DocumentBlock{
-									Format: docFormat,
-									Name:   aws.String("document"),
-									Source: &types.DocumentSourceMemberBytes{
-										Value: fileData,
-									},
-								},
-							})
-						} else {
-							// Treat as image — default to PNG for unknown image types
-							var format types.ImageFormat
-							switch baseMediaType {
-							case "image/png":
-								format = types.ImageFormatPng
-							case "image/jpeg", "image/jpg":
-								format = types.ImageFormatJpeg
-							case "image/gif":
-								format = types.ImageFormatGif
-							case "image/webp":
-								format = types.ImageFormatWebp
-							default:
-								format = types.ImageFormatPng
-							}
-							contentBlocks = append(contentBlocks, &types.ContentBlockMemberImage{
-								Value: types.ImageBlock{
-									Format: format,
-									Source: &types.ImageSourceMemberBytes{
-										Value: fileData,
-									},
-								},
-							})
-						}
-					} else if part.IsToolRequest() {
-						// Handle tool request parts - convert to Bedrock ToolUse blocks
-						toolReq := part.ToolRequest
-						if toolReq != nil {
-							// Create input document from tool request input
-							inputDoc := document.NewLazyDocument(toolReq.Input)
-
-							toolUseBlock := &types.ContentBlockMemberToolUse{
-								Value: types.ToolUseBlock{
-									ToolUseId: aws.String(toolReq.Ref),
-									Name:      aws.String(toolReq.Name),
-									Input:     inputDoc,
-								},
-							}
-							contentBlocks = append(contentBlocks, toolUseBlock)
-						}
-					} else if part.IsToolResponse() {
-						// Handle tool response parts - convert to Bedrock ToolResult blocks
-						toolResp := part.ToolResponse
-						if toolResp != nil {
-							// Create content for tool result
-							var toolResultContent []types.ToolResultContentBlock
-
-							// Convert the output to text content
-							if toolResp.Output != nil {
-								outputText := ""
-								switch output := toolResp.Output.(type) {
-								case string:
-									outputText = output
-								default:
-									// Marshal to JSON if not a string
-									if jsonBytes, err := json.Marshal(output); err == nil {
-										outputText = string(jsonBytes)
-									} else {
-										outputText = fmt.Sprintf("%v", output)
-									}
-								}
-
-								toolResultContent = append(toolResultContent, &types.ToolResultContentBlockMemberText{
-									Value: outputText,
-								})
-							}
-
-							toolResultBlock := &types.ContentBlockMemberToolResult{
-								Value: types.ToolResultBlock{
-									ToolUseId: aws.String(toolResp.Ref),
-									Content:   toolResultContent,
-									Status:    types.ToolResultStatusSuccess,
-								},
-							}
-
-							contentBlocks = append(contentBlocks, toolResultBlock)
-						}
-					} else if part.IsCustom() {
-						// Handle custom parts, the plugin currently supports NewCachePointPart
-						if cpt, ok := CachePointType(part); ok {
-							contentBlocks = append(contentBlocks, &types.ContentBlockMemberCachePoint{
-								Value: types.CachePointBlock{
-									Type: cpt,
-								},
-							})
-						}
-					} else if part.Kind == ai.PartReasoning {
-						// Round-trip Bedrock reasoning (thinking) content so the
-						// signed text and any redacted block survive into the
-						// follow-up request. Reasoning parts without Bedrock
-						// metadata produce no blocks (see reasoningPartToContentBlocks).
-						contentBlocks = append(contentBlocks, reasoningPartToContentBlocks(part)...)
-					}
-				}
-
-				bedrockRole := "user"
-				if msg.Role == ai.RoleModel {
-					bedrockRole = "assistant"
-				}
-
-				if len(contentBlocks) > 0 {
-					messages = append(messages, types.Message{
-						Role:    types.ConversationRole(bedrockRole),
-						Content: contentBlocks,
-					})
-				}
-			}
-		}
-
-		converseInput.Messages = messages
-
-		// When using tools, AWS Bedrock requires that the conversation doesn't end with an assistant message
-		if len(input.Tools) > 0 && len(messages) > 0 {
-			lastMessage := messages[len(messages)-1]
-			if lastMessage.Role == types.ConversationRoleAssistant {
-				// Remove the last assistant message or convert it to user context
-				// For now, we'll just remove it to avoid the validation error
-				messages = messages[:len(messages)-1]
-				converseInput.Messages = messages
-			}
-		}
-
-		if len(systemPrompts) > 0 {
-			converseInput.System = systemPrompts
-		}
-	}
-
-	// Set inference configuration and any model-specific request fields.
 	cfg, err := configFromRequest(input)
 	if err != nil {
 		return nil, err
 	}
-	if cfg != nil {
-		if inferenceConfig := buildInferenceConfig(cfg); inferenceConfig != nil {
-			converseInput.InferenceConfig = inferenceConfig
+
+	systemPrompts, messages, err := convertMessages(input.Messages)
+	if err != nil {
+		return nil, err
+	}
+
+	// When using tools, AWS Bedrock requires that the conversation doesn't end
+	// with an assistant message.
+	if len(input.Tools) > 0 && len(messages) > 0 {
+		if messages[len(messages)-1].Role == types.ConversationRoleAssistant {
+			messages = messages[:len(messages)-1]
 		}
+	}
+
+	converseInput := &bedrockruntime.ConverseInput{
+		ModelId:         aws.String(modelName),
+		Messages:        messages,
+		System:          systemPrompts,
+		InferenceConfig: buildInferenceConfig(cfg),
+	}
+
+	if cfg != nil {
 		if len(cfg.AdditionalModelRequestFields) > 0 {
 			converseInput.AdditionalModelRequestFields = document.NewLazyDocument(cfg.AdditionalModelRequestFields)
 		}
@@ -301,39 +90,253 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 
 	// Handle tools
 	if len(input.Tools) > 0 {
-		var tools []types.Tool
-		for _, tool := range input.Tools {
-			toolSpec := &types.ToolMemberToolSpec{
-				Value: types.ToolSpecification{
-					Name:        aws.String(tool.Name),
-					Description: aws.String(tool.Description),
-				},
-			}
-
-			// Convert JSON schema to Bedrock format
-			if tool.InputSchema != nil {
-				schema, err := b.convertJSONSchemaToBedrockSchema(tool.InputSchema)
-				if err == nil && schema != nil {
-					toolSpec.Value.InputSchema = *schema
-				}
-				// If schema conversion fails, tool will still work without detailed schema
-			}
-
-			tools = append(tools, toolSpec)
+		if cfg != nil && cfg.ToolChoice == ToolChoiceNone {
+			return converseInput, nil
 		}
-
-		converseInput.ToolConfig = &types.ToolConfiguration{
-			Tools: tools,
+		tools, err := b.convertTools(input.Tools)
+		if err != nil {
+			return nil, err
 		}
-	}
-
-	if cfg != nil && cfg.ToolChoice == ToolChoiceNone {
-		converseInput.ToolConfig = nil
-	} else if cfg != nil && cfg.ToolChoice != "" && converseInput.ToolConfig != nil {
-		converseInput.ToolConfig.ToolChoice = buildToolChoice(cfg.ToolChoice)
+		converseInput.ToolConfig = &types.ToolConfiguration{Tools: tools}
+		if cfg != nil && cfg.ToolChoice != "" {
+			choice, err := convertToolChoice(cfg.ToolChoice, input.Tools)
+			if err != nil {
+				return nil, err
+			}
+			converseInput.ToolConfig.ToolChoice = choice
+		}
 	}
 
 	return converseInput, nil
+}
+
+// convertMessages walks the ai.ModelRequest messages and produces a system
+// block list plus the user/assistant/tool conversation.
+func convertMessages(msgs []*ai.Message) ([]types.SystemContentBlock, []types.Message, error) {
+	var system []types.SystemContentBlock
+	var messages []types.Message
+	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
+		if msg.Role == ai.RoleSystem {
+			for _, part := range msg.Content {
+				if part == nil {
+					continue
+				}
+				if cpt, ok := CachePointType(part); ok {
+					system = append(system, &types.SystemContentBlockMemberCachePoint{
+						Value: types.CachePointBlock{Type: cpt},
+					})
+					continue
+				}
+				if part.IsText() {
+					system = append(system, &types.SystemContentBlockMemberText{Value: part.Text})
+				}
+			}
+			continue
+		}
+
+		role, err := convertRole(msg.Role)
+		if err != nil {
+			return nil, nil, err
+		}
+		blocks, err := partsToContentBlocks(msg.Content)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(blocks) == 0 {
+			continue
+		}
+		messages = append(messages, types.Message{Role: role, Content: blocks})
+	}
+	return system, messages, nil
+}
+
+func convertRole(role ai.Role) (types.ConversationRole, error) {
+	switch role {
+	case ai.RoleUser, ai.RoleTool:
+		return types.ConversationRoleUser, nil
+	case ai.RoleModel:
+		return types.ConversationRoleAssistant, nil
+	default:
+		return "", fmt.Errorf("bedrock: unsupported role %q", role)
+	}
+}
+
+func partsToContentBlocks(parts []*ai.Part) ([]types.ContentBlock, error) {
+	var blocks []types.ContentBlock
+	for _, part := range parts {
+		if part == nil {
+			continue
+		}
+		switch {
+		case part.IsText():
+			blocks = append(blocks, &types.ContentBlockMemberText{Value: part.Text})
+		case part.IsMedia():
+			block, err := mediaToBlock(part)
+			if err != nil {
+				return nil, err
+			}
+			blocks = append(blocks, block)
+		case part.IsToolRequest():
+			toolReq := part.ToolRequest
+			if toolReq == nil {
+				continue
+			}
+			blocks = append(blocks, &types.ContentBlockMemberToolUse{
+				Value: types.ToolUseBlock{
+					ToolUseId: aws.String(toolReq.Ref),
+					Name:      aws.String(toolReq.Name),
+					Input:     document.NewLazyDocument(toolReq.Input),
+				},
+			})
+		case part.IsToolResponse():
+			toolResp := part.ToolResponse
+			if toolResp == nil {
+				continue
+			}
+			outputText, err := toolResponseText(toolResp.Output)
+			if err != nil {
+				return nil, err
+			}
+			blocks = append(blocks, &types.ContentBlockMemberToolResult{
+				Value: types.ToolResultBlock{
+					ToolUseId: aws.String(toolResp.Ref),
+					Content: []types.ToolResultContentBlock{
+						&types.ToolResultContentBlockMemberText{Value: outputText},
+					},
+					Status: types.ToolResultStatusSuccess,
+				},
+			})
+		case part.IsCustom():
+			if cpt, ok := CachePointType(part); ok {
+				blocks = append(blocks, &types.ContentBlockMemberCachePoint{
+					Value: types.CachePointBlock{Type: cpt},
+				})
+			}
+		case part.Kind == ai.PartReasoning:
+			blocks = append(blocks, reasoningPartToContentBlocks(part)...)
+		}
+	}
+	return blocks, nil
+}
+
+func toolResponseText(output any) (string, error) {
+	if output == nil {
+		return "", nil
+	}
+	if s, ok := output.(string); ok {
+		return s, nil
+	}
+	jsonBytes, err := json.Marshal(output)
+	if err != nil {
+		return "", fmt.Errorf("bedrock: marshal tool response: %w", err)
+	}
+	return string(jsonBytes), nil
+}
+
+func mediaToBlock(part *ai.Part) (types.ContentBlock, error) {
+	mime := mediaMIME(part)
+	if mime == "" {
+		return nil, errors.New("bedrock: media part has no content type")
+	}
+	fileData, err := decodeMediaPayload(part.Text)
+	if err != nil {
+		return nil, err
+	}
+	if format := documentFormatFor(mime); format != "" {
+		return &types.ContentBlockMemberDocument{
+			Value: types.DocumentBlock{
+				Format: format,
+				Name:   aws.String("document"),
+				Source: &types.DocumentSourceMemberBytes{Value: fileData},
+			},
+		}, nil
+	}
+	if format := imageFormatFor(mime); format != "" {
+		return &types.ContentBlockMemberImage{
+			Value: types.ImageBlock{
+				Format: format,
+				Source: &types.ImageSourceMemberBytes{Value: fileData},
+			},
+		}, nil
+	}
+	return nil, fmt.Errorf("bedrock: unsupported media MIME type %q (must be png/jpeg/gif/webp or one of pdf/csv/doc/docx/xls/xlsx/html/txt/md)", mime)
+}
+
+func mediaMIME(part *ai.Part) string {
+	mime := strings.TrimSpace(part.ContentType)
+	if mime == "" && strings.HasPrefix(part.Text, "data:") {
+		header, _, ok := strings.Cut(part.Text, ",")
+		if ok {
+			header = strings.TrimPrefix(header, "data:")
+			mime, _, _ = strings.Cut(header, ";")
+		}
+	}
+	mime, _, _ = strings.Cut(mime, ";")
+	return strings.ToLower(strings.TrimSpace(mime))
+}
+
+// decodeMediaPayload accepts either a raw "data:<mime>;base64,..." URL or a
+// bare base64 string and returns decoded bytes. Bedrock expects raw bytes; the
+// SDK base64-encodes them for the wire.
+func decodeMediaPayload(s string) ([]byte, error) {
+	if s == "" {
+		return nil, errors.New("bedrock: media part has empty data")
+	}
+	if i := strings.Index(s, ";base64,"); i >= 0 {
+		s = s[i+len(";base64,"):]
+	} else if strings.HasPrefix(s, "data:") {
+		return nil, errors.New("bedrock: data URL must be base64-encoded (use ';base64,' prefix)")
+	} else if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return nil, errors.New("bedrock: remote URLs are not supported; use a data URL or base64-encoded data")
+	}
+	fileData, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: decode base64 media: %w", err)
+	}
+	return fileData, nil
+}
+
+func imageFormatFor(mime string) types.ImageFormat {
+	switch mime {
+	case "image/png":
+		return types.ImageFormatPng
+	case "image/jpeg", "image/jpg":
+		return types.ImageFormatJpeg
+	case "image/gif":
+		return types.ImageFormatGif
+	case "image/webp":
+		return types.ImageFormatWebp
+	default:
+		return ""
+	}
+}
+
+func documentFormatFor(mime string) types.DocumentFormat {
+	switch mime {
+	case "application/pdf":
+		return types.DocumentFormatPdf
+	case "text/html":
+		return types.DocumentFormatHtml
+	case "text/plain":
+		return types.DocumentFormatTxt
+	case "text/markdown":
+		return types.DocumentFormatMd
+	case "text/csv":
+		return types.DocumentFormatCsv
+	case "application/msword":
+		return types.DocumentFormatDoc
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return types.DocumentFormatDocx
+	case "application/vnd.ms-excel":
+		return types.DocumentFormatXls
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return types.DocumentFormatXlsx
+	default:
+		return ""
+	}
 }
 
 // generateTextSync handles synchronous text generation
@@ -348,96 +351,107 @@ func (b *Bedrock) generateTextSync(ctx context.Context, input *bedrockruntime.Co
 	}
 
 	// Convert response to Genkit format
-	return b.convertResponse(response, originalInput), nil
+	modelResponse, err := b.convertResponse(response, originalInput)
+	if err != nil {
+		return nil, err
+	}
+	modelResponse.Request = originalInput
+	return modelResponse, nil
 }
 
-func (b *Bedrock) convertResponse(response *bedrockruntime.ConverseOutput, originalInput *ai.ModelRequest) *ai.ModelResponse {
-	// Initialize response
-	modelResponse := &ai.ModelResponse{
-		Message: &ai.Message{
-			Role:    ai.RoleModel,
-			Content: []*ai.Part{},
-		},
-		FinishReason: ai.FinishReasonStop,
+func (b *Bedrock) convertResponse(response *bedrockruntime.ConverseOutput, originalInput *ai.ModelRequest) (*ai.ModelResponse, error) {
+	if response == nil {
+		return nil, errors.New("bedrock: converse response is nil")
 	}
 
-	// Extract output message
-	if response.Output != nil {
-		if msgMember, ok := response.Output.(*types.ConverseOutputMemberMessage); ok {
-			message := msgMember.Value
+	msgMember, ok := response.Output.(*types.ConverseOutputMemberMessage)
+	if !ok {
+		return nil, fmt.Errorf("bedrock: unexpected output variant %T", response.Output)
+	}
+	parts, err := b.contentBlocksToParts(msgMember.Value.Content, originalInput)
+	if err != nil {
+		return nil, err
+	}
+	if len(parts) == 0 {
+		parts = append(parts, ai.NewTextPart(""))
+	}
+	return &ai.ModelResponse{
+		Message:      &ai.Message{Role: ai.RoleModel, Content: parts},
+		FinishReason: convertStopReasonToGenkit(response.StopReason),
+		Usage:        usageFromTokens(response.Usage),
+		Request:      originalInput,
+	}, nil
+}
 
-			// Convert content blocks
-			for _, contentBlock := range message.Content {
-				switch block := contentBlock.(type) {
-				case *types.ContentBlockMemberText:
-					modelResponse.Message.Content = append(modelResponse.Message.Content,
-						ai.NewTextPart(block.Value))
-
-				case *types.ContentBlockMemberToolUse:
-					// Handle tool use blocks - convert to proper Genkit tool request
-					toolUse := block.Value
-
-					// Extract tool input from the AWS document format
-					var toolInput interface{}
-					if toolUse.Input != nil {
-						// Unmarshal the tool input document to a map
-						var inputMap map[string]interface{}
-						if err := toolUse.Input.UnmarshalSmithyDocument(&inputMap); err == nil {
-							// Convert tool input based on the original tool schema
-							toolInput = b.convertToolInputTypes(inputMap, aws.ToString(toolUse.Name), originalInput.Tools)
-						} else {
-							// Fallback: create empty map for failed unmarshaling
-							toolInput = map[string]interface{}{
-								"_unmarshal_error": err.Error(),
-								"_tool_use_id":     aws.ToString(toolUse.ToolUseId),
-							}
-						}
-					} else {
-						toolInput = map[string]interface{}{}
-					}
-
-					// Create a proper tool request part
-					toolRequest := &ai.ToolRequest{
-						Name:  aws.ToString(toolUse.Name),
-						Input: toolInput,
-						Ref:   aws.ToString(toolUse.ToolUseId),
-					}
-
-					modelResponse.Message.Content = append(modelResponse.Message.Content,
-						ai.NewToolRequestPart(toolRequest))
-
-				case *types.ContentBlockMemberReasoningContent:
-					// Reasoning ("thinking") content: carry the signed text and
-					// any redacted block so it can be replayed on the next turn.
-					if part, err := reasoningBlockToPart(block.Value); err == nil && part != nil {
-						modelResponse.Message.Content = append(modelResponse.Message.Content, part)
-					}
-				}
+func (b *Bedrock) contentBlocksToParts(blocks []types.ContentBlock, originalInput *ai.ModelRequest) ([]*ai.Part, error) {
+	out := make([]*ai.Part, 0, len(blocks))
+	for _, contentBlock := range blocks {
+		switch block := contentBlock.(type) {
+		case *types.ContentBlockMemberText:
+			out = append(out, ai.NewTextPart(block.Value))
+		case *types.ContentBlockMemberToolUse:
+			toolUse := block.Value
+			toolInput, err := b.unwrapToolInput(toolUse.Input, aws.ToString(toolUse.Name), originalInput)
+			if err != nil {
+				return nil, err
 			}
+			out = append(out, ai.NewToolRequestPart(&ai.ToolRequest{
+				Name:  aws.ToString(toolUse.Name),
+				Input: toolInput,
+				Ref:   aws.ToString(toolUse.ToolUseId),
+			}))
+		case *types.ContentBlockMemberReasoningContent:
+			part, err := reasoningBlockToPart(block.Value)
+			if err != nil {
+				return nil, err
+			}
+			if part != nil {
+				out = append(out, part)
+			}
+		default:
+			return nil, fmt.Errorf("bedrock: unhandled response content variant %T", contentBlock)
 		}
 	}
+	return out, nil
+}
 
-	// Convert finish reason
-	modelResponse.FinishReason = convertStopReasonToGenkit(response.StopReason)
-
-	// Extract usage information (if available in the API)
-	if response.Usage != nil {
-		// Map AWS Bedrock TokenUsage to Genkit GenerationUsage
-		modelResponse.Usage = &ai.GenerationUsage{
-			InputTokens:         int(aws.ToInt32(response.Usage.InputTokens)),
-			OutputTokens:        int(aws.ToInt32(response.Usage.OutputTokens)),
-			TotalTokens:         int(aws.ToInt32(response.Usage.TotalTokens)),
-			CachedContentTokens: int(aws.ToInt32(response.Usage.CacheReadInputTokens)),
-		}
+func (b *Bedrock) unwrapToolInput(input document.Interface, toolName string, originalInput *ai.ModelRequest) (any, error) {
+	if input == nil {
+		return map[string]any{}, nil
 	}
-
-	// If no content was extracted, add placeholder
-	if len(modelResponse.Message.Content) == 0 {
-		modelResponse.Message.Content = append(modelResponse.Message.Content,
-			ai.NewTextPart(""))
+	var decoded any
+	data, err := input.MarshalSmithyDocument()
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: decode tool input: %w", err)
 	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("bedrock: decode tool input: %w", err)
+	}
+	var tools []*ai.ToolDefinition
+	if originalInput != nil {
+		tools = originalInput.Tools
+	}
+	if inputMap, ok := decoded.(map[string]any); ok {
+		return b.convertToolInputTypes(inputMap, toolName, tools), nil
+	}
+	return decoded, nil
+}
 
-	return modelResponse
+func usageFromTokens(usage *types.TokenUsage) *ai.GenerationUsage {
+	if usage == nil {
+		return nil
+	}
+	return &ai.GenerationUsage{
+		InputTokens:         int(aws.ToInt32(usage.InputTokens)),
+		OutputTokens:        int(aws.ToInt32(usage.OutputTokens)),
+		TotalTokens:         int(aws.ToInt32(usage.TotalTokens)),
+		CachedContentTokens: int(aws.ToInt32(usage.CacheReadInputTokens)),
+	}
 }
 
 // configFromRequest decodes input.Config into a *Config. It accepts the typed
@@ -518,33 +532,21 @@ func configFromGenerationCommonConfig(v *ai.GenerationCommonConfig) *Config {
 	return cfg
 }
 
-// buildInferenceConfig maps a *Config onto Bedrock's InferenceConfiguration. It
-// returns nil when nothing is set, leaving Bedrock to apply its own defaults
-// (MaxTokens is only sent when explicitly provided).
+// buildInferenceConfig maps a *Config onto Bedrock's InferenceConfiguration.
+// A non-nil pointer is always returned because most models require MaxTokens.
 func buildInferenceConfig(cfg *Config) *types.InferenceConfiguration {
-	if cfg == nil {
-		return nil
-	}
 	ic := &types.InferenceConfiguration{}
-	set := false
-	if cfg.MaxTokens > 0 {
-		ic.MaxTokens = aws.Int32(int32(cfg.MaxTokens))
-		set = true
+	maxTokens := defaultMaxTokens
+	if cfg != nil && cfg.MaxTokens > 0 {
+		maxTokens = cfg.MaxTokens
 	}
-	if cfg.Temperature != nil {
+	ic.MaxTokens = aws.Int32(int32(maxTokens))
+	if cfg != nil {
 		ic.Temperature = cfg.Temperature
-		set = true
-	}
-	if cfg.TopP != nil {
 		ic.TopP = cfg.TopP
-		set = true
-	}
-	if len(cfg.StopSequences) > 0 {
-		ic.StopSequences = cfg.StopSequences
-		set = true
-	}
-	if !set {
-		return nil
+		if len(cfg.StopSequences) > 0 {
+			ic.StopSequences = cfg.StopSequences
+		}
 	}
 	return ic
 }
@@ -555,12 +557,60 @@ func buildToolChoice(choice string) types.ToolChoice {
 	switch choice {
 	case ToolChoiceAuto:
 		return &types.ToolChoiceMemberAuto{}
-	case ToolChoiceRequired, "any":
+	case ToolChoiceRequired, ToolChoiceAny:
 		return &types.ToolChoiceMemberAny{}
 	default:
 		return &types.ToolChoiceMemberTool{
 			Value: types.SpecificToolChoice{Name: aws.String(choice)},
 		}
+	}
+}
+
+func (b *Bedrock) convertTools(tools []*ai.ToolDefinition) ([]types.Tool, error) {
+	out := make([]types.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if tool == nil {
+			return nil, errors.New("bedrock: tool definition required")
+		}
+		if tool.Name == "" {
+			return nil, errors.New("bedrock: tool name required")
+		}
+
+		schema := tool.InputSchema
+		if schema == nil {
+			schema = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		var inputSchema types.ToolInputSchema
+		if bedrockSchema, err := b.convertJSONSchemaToBedrockSchema(schema); err == nil && bedrockSchema != nil {
+			inputSchema = *bedrockSchema
+		}
+
+		out = append(out, &types.ToolMemberToolSpec{
+			Value: types.ToolSpecification{
+				Name:        aws.String(tool.Name),
+				Description: aws.String(tool.Description),
+				InputSchema: inputSchema,
+			},
+		})
+	}
+	return out, nil
+}
+
+func convertToolChoice(choice string, tools []*ai.ToolDefinition) (types.ToolChoice, error) {
+	switch choice {
+	case "", ToolChoiceAuto:
+		return &types.ToolChoiceMemberAuto{}, nil
+	case ToolChoiceRequired, ToolChoiceAny:
+		return &types.ToolChoiceMemberAny{}, nil
+	default:
+		for _, tool := range tools {
+			if tool != nil && tool.Name == choice {
+				return &types.ToolChoiceMemberTool{
+					Value: types.SpecificToolChoice{Name: aws.String(choice)},
+				}, nil
+			}
+		}
+		return nil, fmt.Errorf("bedrock: ToolChoice %q does not match any declared tool", choice)
 	}
 }
 
@@ -701,6 +751,22 @@ func (b *Bedrock) convertValueWithSchema(value interface{}, schema map[string]an
 		}
 	}
 
+	if num, ok := value.(json.Number); ok {
+		switch schemaType {
+		case "number":
+			if floatVal, err := num.Float64(); err == nil {
+				return floatVal
+			}
+		case "integer":
+			if intVal, err := num.Int64(); err == nil {
+				return intVal
+			}
+			if floatVal, err := num.Float64(); err == nil {
+				return int64(floatVal)
+			}
+		}
+	}
+
 	// Handle numeric types that need conversion
 	switch schemaType {
 	case "number":
@@ -765,6 +831,9 @@ func (b *Bedrock) convertJSONSchemaToBedrockSchema(schema any) (*types.ToolInput
 	schemaMap, err := b.normalizeSchema(schema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize schema: %w", err)
+	}
+	if _, err := json.Marshal(schemaMap); err != nil {
+		return nil, fmt.Errorf("failed to validate schema JSON: %w", err)
 	}
 
 	// Create a document using the AWS SDK's NewLazyDocument function
@@ -915,16 +984,14 @@ func NewArraySchema(itemSchema map[string]interface{}, description string) map[s
 // convertStopReasonToGenkit converts Bedrock stop reason to Genkit finish reason
 func convertStopReasonToGenkit(stopReason types.StopReason) ai.FinishReason {
 	switch stopReason {
-	case types.StopReasonEndTurn:
+	case types.StopReasonEndTurn, types.StopReasonStopSequence, types.StopReasonToolUse:
 		return ai.FinishReasonStop
-	case types.StopReasonMaxTokens:
+	case types.StopReasonMaxTokens, types.StopReasonModelContextWindowExceeded:
 		return ai.FinishReasonLength
-	case types.StopReasonStopSequence:
-		return ai.FinishReasonStop
-	case types.StopReasonToolUse:
-		return ai.FinishReasonStop
-	case types.StopReasonContentFiltered:
+	case types.StopReasonContentFiltered, types.StopReasonGuardrailIntervened:
 		return ai.FinishReasonBlocked
+	case types.StopReasonMalformedModelOutput, types.StopReasonMalformedToolUse:
+		return ai.FinishReasonOther
 	default:
 		return ai.FinishReasonOther
 	}

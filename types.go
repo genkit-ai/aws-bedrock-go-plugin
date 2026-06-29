@@ -54,6 +54,7 @@ const (
 const (
 	ToolChoiceAuto     ToolChoice = "auto"
 	ToolChoiceRequired ToolChoice = "required"
+	ToolChoiceAny      ToolChoice = "any"
 	ToolChoiceNone     ToolChoice = "none"
 )
 
@@ -88,8 +89,9 @@ const (
 // configFromRequest. The typed form exists mainly so model-specific knobs like
 // Claude extended thinking can be enabled through AdditionalModelRequestFields.
 type Config struct {
-	// MaxTokens is the upper bound on the generated response length. When 0 the
-	// plugin leaves it unset and Bedrock applies its own per-model default.
+	// MaxTokens is the upper bound on the generated response length. When 0, the
+	// plugin sends a default of 4096 because Bedrock requires this field for
+	// most Converse models.
 	MaxTokens int `json:"maxTokens,omitempty"`
 
 	// Temperature controls sampling randomness. nil leaves it to the model default.

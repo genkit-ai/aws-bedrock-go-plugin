@@ -19,6 +19,7 @@ package bedrock
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,7 +48,10 @@ func TestConvertStopReasonToGenkit(t *testing.T) {
 		{types.StopReasonStopSequence, ai.FinishReasonStop},
 		{types.StopReasonToolUse, ai.FinishReasonStop},
 		{types.StopReasonContentFiltered, ai.FinishReasonBlocked},
-		{"guardrail_intervened", ai.FinishReasonOther},
+		{types.StopReasonGuardrailIntervened, ai.FinishReasonBlocked},
+		{types.StopReasonModelContextWindowExceeded, ai.FinishReasonLength},
+		{types.StopReasonMalformedModelOutput, ai.FinishReasonOther},
+		{types.StopReasonMalformedToolUse, ai.FinishReasonOther},
 		{"", ai.FinishReasonOther},
 	}
 	for _, tt := range tests {
@@ -61,11 +65,11 @@ func TestConvertStopReasonToGenkit(t *testing.T) {
 // ---- buildInferenceConfig ---------------------------------------------------
 
 func TestBuildInferenceConfig_NilAndZero(t *testing.T) {
-	if buildInferenceConfig(nil) != nil {
-		t.Error("nil Config should return nil InferenceConfiguration")
+	if ic := buildInferenceConfig(nil); ic == nil || ic.MaxTokens == nil || *ic.MaxTokens != defaultMaxTokens {
+		t.Fatalf("nil Config MaxTokens = %v, want %d", ic, defaultMaxTokens)
 	}
-	if buildInferenceConfig(&Config{}) != nil {
-		t.Error("zero Config should return nil InferenceConfiguration")
+	if ic := buildInferenceConfig(&Config{}); ic == nil || ic.MaxTokens == nil || *ic.MaxTokens != defaultMaxTokens {
+		t.Fatalf("zero Config MaxTokens = %v, want %d", ic, defaultMaxTokens)
 	}
 }
 
@@ -109,7 +113,7 @@ func TestBuildInferenceConfig_PartialFields(t *testing.T) {
 
 	// Only StopSequences.
 	ic = buildInferenceConfig(&Config{StopSequences: []string{"stop"}})
-	if ic == nil || len(ic.StopSequences) != 1 {
+	if ic == nil || ic.MaxTokens == nil || *ic.MaxTokens != defaultMaxTokens || len(ic.StopSequences) != 1 {
 		t.Fatalf("StopSequences-only config: ic = %v", ic)
 	}
 }
@@ -423,6 +427,103 @@ func TestBuildConverseInput_MultiTurnText(t *testing.T) {
 	}
 }
 
+func TestBuildConverseInput_SkipsNilMessagesAndParts(t *testing.T) {
+	b := &Bedrock{}
+	out, err := b.buildConverseInput("model-id", &ai.ModelRequest{
+		Messages: []*ai.Message{
+			nil,
+			{Role: ai.RoleUser, Content: []*ai.Part{nil, ai.NewTextPart("hi")}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(out.Messages))
+	}
+	if len(out.Messages[0].Content) != 1 {
+		t.Fatalf("len(Content) = %d, want 1", len(out.Messages[0].Content))
+	}
+}
+
+func TestMediaToBlock_ImageAndDocument(t *testing.T) {
+	payload := []byte("file bytes")
+	encoded := base64.StdEncoding.EncodeToString(payload)
+
+	imageBlock, err := mediaToBlock(ai.NewMediaPart(" Image/JPEG ; charset=binary ", "data:image/jpeg;base64,"+encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, ok := imageBlock.(*types.ContentBlockMemberImage)
+	if !ok {
+		t.Fatalf("image block = %T, want *ContentBlockMemberImage", imageBlock)
+	}
+	if image.Value.Format != types.ImageFormatJpeg {
+		t.Errorf("image format = %q, want jpeg", image.Value.Format)
+	}
+	imageBytes, ok := image.Value.Source.(*types.ImageSourceMemberBytes)
+	if !ok {
+		t.Fatalf("image source = %T, want bytes", image.Value.Source)
+	}
+	if string(imageBytes.Value) != string(payload) {
+		t.Errorf("image bytes = %q, want %q", string(imageBytes.Value), string(payload))
+	}
+
+	docBlock, err := mediaToBlock(ai.NewMediaPart("text/markdown", encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, ok := docBlock.(*types.ContentBlockMemberDocument)
+	if !ok {
+		t.Fatalf("document block = %T, want *ContentBlockMemberDocument", docBlock)
+	}
+	if doc.Value.Format != types.DocumentFormatMd {
+		t.Errorf("document format = %q, want md", doc.Value.Format)
+	}
+}
+
+func TestMediaToBlock_StrictValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		part        *ai.Part
+		wantMessage string
+	}{
+		{
+			name:        "remote URL",
+			part:        ai.NewMediaPart("image/png", "https://example.com/cat.png"),
+			wantMessage: "remote URLs are not supported",
+		},
+		{
+			name:        "raw content",
+			part:        ai.NewMediaPart("image/png", "not base64"),
+			wantMessage: "decode base64 media",
+		},
+		{
+			name:        "missing MIME",
+			part:        ai.NewMediaPart("", base64.StdEncoding.EncodeToString([]byte("bytes"))),
+			wantMessage: "no content type",
+		},
+		{
+			name:        "unknown MIME",
+			part:        ai.NewMediaPart("application/zip", base64.StdEncoding.EncodeToString([]byte("bytes"))),
+			wantMessage: "unsupported media MIME type",
+		},
+		{
+			name:        "malformed data URL",
+			part:        ai.NewMediaPart("image/png", "data:image/png,not-base64"),
+			wantMessage: "data URL must be base64-encoded",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := mediaToBlock(tt.part)
+			if err == nil || !strings.Contains(err.Error(), tt.wantMessage) {
+				t.Fatalf("mediaToBlock() error = %v, want containing %q", err, tt.wantMessage)
+			}
+		})
+	}
+}
+
 // ---- convertResponse --------------------------------------------------------
 
 func TestConvertResponse_ToolUseBlock(t *testing.T) {
@@ -457,7 +558,10 @@ func TestConvertResponse_ToolUseBlock(t *testing.T) {
 			},
 		},
 	}
-	got := b.convertResponse(resp, req)
+	got, err := b.convertResponse(resp, req)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if got.FinishReason != ai.FinishReasonStop {
 		t.Errorf("FinishReason = %v, want Stop (tool use maps to Stop)", got.FinishReason)
@@ -474,6 +578,97 @@ func TestConvertResponse_ToolUseBlock(t *testing.T) {
 	}
 	if tr.Ref != "call-123" {
 		t.Errorf("tool ref = %q, want call-123", tr.Ref)
+	}
+}
+
+func TestConvertResponse_ToolUsePreservesLargeIntegerInput(t *testing.T) {
+	b := &Bedrock{}
+	const largeID int64 = 9007199254740993
+	inputDoc := document.NewLazyDocument(map[string]any{"id": largeID})
+
+	resp := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberToolUse{
+						Value: types.ToolUseBlock{
+							ToolUseId: aws.String("call-123"),
+							Name:      aws.String("lookup"),
+							Input:     inputDoc,
+						},
+					},
+				},
+			},
+		},
+		StopReason: types.StopReasonToolUse,
+	}
+	req := &ai.ModelRequest{
+		Tools: []*ai.ToolDefinition{
+			{
+				Name: "lookup",
+				InputSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"id": map[string]any{"type": "integer"}},
+				},
+			},
+		},
+	}
+
+	got, err := b.convertResponse(resp, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, ok := got.Message.Content[0].ToolRequest.Input.(map[string]any)
+	if !ok {
+		t.Fatalf("tool input = %T, want map[string]any", got.Message.Content[0].ToolRequest.Input)
+	}
+	if input["id"] != largeID {
+		t.Fatalf("id = %#v (%T), want %d", input["id"], input["id"], largeID)
+	}
+}
+
+func TestConvertResponse_ToolUseIntegerSchemaTruncatesDecimalJSONNumber(t *testing.T) {
+	b := &Bedrock{}
+	inputDoc := document.NewLazyDocument(map[string]any{"count": 7.9})
+
+	resp := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberToolUse{
+						Value: types.ToolUseBlock{
+							ToolUseId: aws.String("call-123"),
+							Name:      aws.String("count_items"),
+							Input:     inputDoc,
+						},
+					},
+				},
+			},
+		},
+		StopReason: types.StopReasonToolUse,
+	}
+	req := &ai.ModelRequest{
+		Tools: []*ai.ToolDefinition{
+			{
+				Name: "count_items",
+				InputSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"count": map[string]any{"type": "integer"}},
+				},
+			},
+		},
+	}
+
+	got, err := b.convertResponse(resp, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, ok := got.Message.Content[0].ToolRequest.Input.(map[string]any)
+	if !ok {
+		t.Fatalf("tool input = %T, want map[string]any", got.Message.Content[0].ToolRequest.Input)
+	}
+	if input["count"] != int64(7) {
+		t.Fatalf("count = %#v (%T), want int64(7)", input["count"], input["count"])
 	}
 }
 
@@ -496,7 +691,10 @@ func TestConvertResponse_TokenUsage(t *testing.T) {
 		},
 	}
 
-	got := b.convertResponse(resp, &ai.ModelRequest{})
+	got, err := b.convertResponse(resp, &ai.ModelRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.Usage == nil {
 		t.Fatal("expected Usage to be set")
 	}
@@ -514,15 +712,52 @@ func TestConvertResponse_TokenUsage(t *testing.T) {
 	}
 }
 
-func TestConvertResponse_NilOutputPlaceholder(t *testing.T) {
+func TestConvertResponse_SetsOriginalRequest(t *testing.T) {
 	b := &Bedrock{}
-	// Output is nil — plugin should not panic and should return an empty text part.
-	got := b.convertResponse(&bedrockruntime.ConverseOutput{}, &ai.ModelRequest{})
-	if len(got.Message.Content) != 1 {
-		t.Fatalf("len(Content) = %d, want 1 placeholder", len(got.Message.Content))
+	req := &ai.ModelRequest{}
+	resp := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{Content: []types.ContentBlock{&types.ContentBlockMemberText{Value: "hi"}}},
+		},
+		StopReason: types.StopReasonEndTurn,
 	}
-	if !got.Message.Content[0].IsText() {
-		t.Errorf("placeholder part kind = %v, want text", got.Message.Content[0].Kind)
+
+	got, err := b.convertResponse(resp, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Request != req {
+		t.Fatalf("Request = %p, want %p", got.Request, req)
+	}
+}
+
+func TestConvertResponse_NilOutputError(t *testing.T) {
+	b := &Bedrock{}
+	_, err := b.convertResponse(&bedrockruntime.ConverseOutput{}, &ai.ModelRequest{})
+	if err == nil || !strings.Contains(err.Error(), "unexpected output variant") {
+		t.Fatalf("expected unexpected output error, got %v", err)
+	}
+}
+
+func TestConvertResponse_UnknownContentVariant(t *testing.T) {
+	b := &Bedrock{}
+	resp := &bedrockruntime.ConverseOutput{
+		Output: &types.ConverseOutputMemberMessage{
+			Value: types.Message{
+				Content: []types.ContentBlock{
+					&types.ContentBlockMemberImage{
+						Value: types.ImageBlock{
+							Format: types.ImageFormatPng,
+							Source: &types.ImageSourceMemberBytes{Value: []byte("png")},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := b.convertResponse(resp, &ai.ModelRequest{})
+	if err == nil || !strings.Contains(err.Error(), "unhandled response content variant") {
+		t.Fatalf("expected unhandled content error, got %v", err)
 	}
 }
 
@@ -543,10 +778,17 @@ func TestConvertResponse_StopReasonMappedToFinishReason(t *testing.T) {
 	}{
 		{types.StopReasonEndTurn, ai.FinishReasonStop},
 		{types.StopReasonMaxTokens, ai.FinishReasonLength},
+		{types.StopReasonModelContextWindowExceeded, ai.FinishReasonLength},
 		{types.StopReasonContentFiltered, ai.FinishReasonBlocked},
+		{types.StopReasonGuardrailIntervened, ai.FinishReasonBlocked},
+		{types.StopReasonMalformedModelOutput, ai.FinishReasonOther},
+		{types.StopReasonMalformedToolUse, ai.FinishReasonOther},
 	}
 	for _, tt := range tests {
-		got := b.convertResponse(makeResp(tt.sr), &ai.ModelRequest{})
+		got, err := b.convertResponse(makeResp(tt.sr), &ai.ModelRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
 		if got.FinishReason != tt.want {
 			t.Errorf("stop=%q: FinishReason=%q, want %q", tt.sr, got.FinishReason, tt.want)
 		}
@@ -1074,5 +1316,53 @@ func TestBuildConverseInput_ToolChoiceNone(t *testing.T) {
 	}
 	if out.ToolConfig != nil {
 		t.Errorf("ToolConfig = %v, want nil for ToolChoiceNone", out.ToolConfig)
+	}
+}
+
+func TestBuildConverseInput_ToolChoiceNoneSkipsInvalidTool(t *testing.T) {
+	b := &Bedrock{}
+	req := &ai.ModelRequest{
+		Messages: []*ai.Message{
+			{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("hello")}},
+		},
+		Tools:  []*ai.ToolDefinition{nil},
+		Config: &Config{ToolChoice: ToolChoiceNone},
+	}
+
+	out, err := b.buildConverseInput("model-id", req)
+	if err != nil {
+		t.Fatalf("buildConverseInput() error = %v", err)
+	}
+	if out.ToolConfig != nil {
+		t.Errorf("ToolConfig = %v, want nil for ToolChoiceNone", out.ToolConfig)
+	}
+}
+
+func TestBuildConverseInput_ToolSchemaConversionFailureFallsBack(t *testing.T) {
+	b := &Bedrock{}
+	out, err := b.buildConverseInput("model-id", &ai.ModelRequest{
+		Messages: []*ai.Message{
+			{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("use a tool")}},
+		},
+		Tools: []*ai.ToolDefinition{
+			{
+				Name:        "bad_schema_tool",
+				Description: "schema cannot be JSON marshaled",
+				InputSchema: map[string]any{"bad": func() {}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildConverseInput() error = %v", err)
+	}
+	if out.ToolConfig == nil || len(out.ToolConfig.Tools) != 1 {
+		t.Fatalf("ToolConfig = %v, want one tool", out.ToolConfig)
+	}
+	spec, ok := out.ToolConfig.Tools[0].(*types.ToolMemberToolSpec)
+	if !ok {
+		t.Fatalf("tool type = %T, want *ToolMemberToolSpec", out.ToolConfig.Tools[0])
+	}
+	if spec.Value.InputSchema != nil {
+		t.Errorf("InputSchema = %T, want nil fallback after conversion failure", spec.Value.InputSchema)
 	}
 }

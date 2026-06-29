@@ -143,7 +143,10 @@ func TestConvertResponse_ReasoningSignatureAndRedacted(t *testing.T) {
 		},
 	}
 
-	got := b.convertResponse(resp, &ai.ModelRequest{})
+	got, err := b.convertResponse(resp, &ai.ModelRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	parts := got.Message.Content
 	if len(parts) != 2 {
 		t.Fatalf("len(parts) = %d, want 2", len(parts))
@@ -190,7 +193,10 @@ func TestConvertResponse_TextSkipsReasoning(t *testing.T) {
 		},
 	}
 
-	got := b.convertResponse(resp, &ai.ModelRequest{})
+	got, err := b.convertResponse(resp, &ai.ModelRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if text := got.Text(); text != "the answer is 42" {
 		t.Errorf("Text() = %q, want %q (reasoning leaked)", text, "the answer is 42")
 	}

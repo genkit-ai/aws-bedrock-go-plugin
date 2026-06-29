@@ -112,6 +112,7 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 					Content: acc.finalContent(),
 				},
 				FinishReason: convertStopReasonToGenkit(stopReason),
+				Request:      originalInput,
 			}
 
 		}
@@ -128,6 +129,7 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 				Content: acc.finalContent(),
 			},
 			FinishReason: ai.FinishReasonStop,
+			Request:      originalInput,
 		}
 	}
 
