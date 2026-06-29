@@ -40,6 +40,15 @@ const (
 	defaultExtendedClaudeMaxTokens int32 = 8192
 )
 
+var extendedClaudeMaxTokenPatterns = []string{
+	"claude-3-5",
+	"claude-3-7",
+	"claude-4",
+	"claude-haiku-4",
+	"claude-sonnet-4",
+	"claude-opus-4",
+}
+
 // generateText handles text generation using Bedrock Converse API
 func (b *Bedrock) generateText(ctx context.Context, modelName string, input *ai.ModelRequest, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
 	// Convert Genkit request to Bedrock Converse input
@@ -555,13 +564,10 @@ func defaultMaxTokensForModel(modelName string) (int32, bool) {
 	if !strings.Contains(name, "claude") {
 		return 0, false
 	}
-	if strings.Contains(name, "claude-3-5") ||
-		strings.Contains(name, "claude-3-7") ||
-		strings.Contains(name, "claude-4") ||
-		strings.Contains(name, "claude-haiku-4") ||
-		strings.Contains(name, "claude-sonnet-4") ||
-		strings.Contains(name, "claude-opus-4") {
-		return defaultExtendedClaudeMaxTokens, true
+	for _, pattern := range extendedClaudeMaxTokenPatterns {
+		if strings.Contains(name, pattern) {
+			return defaultExtendedClaudeMaxTokens, true
+		}
 	}
 	return defaultClaudeMaxTokens, true
 }
