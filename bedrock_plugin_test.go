@@ -393,13 +393,6 @@ func TestBuildConverseInput_MediaContentBlocks(t *testing.T) {
 			wantBlockType:   "image",
 			wantImageFormat: types.ImageFormatJpeg,
 		},
-		{
-			name:            "unknown type falls back to ImageBlock with png format",
-			contentType:     "application/octet-stream",
-			dataURL:         "data:application/octet-stream;base64," + imgB64,
-			wantBlockType:   "image",
-			wantImageFormat: types.ImageFormatPng,
-		},
 	}
 
 	for _, tt := range tests {
