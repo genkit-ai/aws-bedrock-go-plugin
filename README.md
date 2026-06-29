@@ -204,7 +204,7 @@ Pass `bedrock.Config` with `ai.WithConfig` for Converse model calls.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `MaxTokens` | `4096` | Maximum response tokens. Bedrock requires this for most Converse models. |
+| `MaxTokens` | model default; Claude defaults to `4096` or `8192` | Maximum response tokens. Bedrock requires this for Claude Converse models. |
 | `Temperature` | model default | Sampling randomness. |
 | `TopP` | model default | Nucleus sampling cutoff. |
 | `StopSequences` | none | Strings that stop generation. |

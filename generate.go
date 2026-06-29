@@ -35,7 +35,19 @@ import (
 	"github.com/firebase/genkit/go/ai"
 )
 
-const defaultMaxTokens = 4096
+const (
+	defaultClaudeMaxTokens         int32 = 4096
+	defaultExtendedClaudeMaxTokens int32 = 8192
+)
+
+var extendedClaudeMaxTokenPatterns = []string{
+	"claude-3-5",
+	"claude-3-7",
+	"claude-4",
+	"claude-haiku-4",
+	"claude-sonnet-4",
+	"claude-opus-4",
+}
 
 // generateText handles text generation using Bedrock Converse API
 func (b *Bedrock) generateText(ctx context.Context, modelName string, input *ai.ModelRequest, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
@@ -75,11 +87,21 @@ func (b *Bedrock) buildConverseInput(modelName string, input *ai.ModelRequest) (
 		}
 	}
 
+	inferenceConfig := buildInferenceConfig(cfg)
+	if maxTokens, ok := defaultMaxTokensForModel(modelName); ok {
+		if inferenceConfig == nil {
+			inferenceConfig = &types.InferenceConfiguration{}
+		}
+		if inferenceConfig.MaxTokens == nil {
+			inferenceConfig.MaxTokens = aws.Int32(maxTokens)
+		}
+	}
+
 	converseInput := &bedrockruntime.ConverseInput{
 		ModelId:         aws.String(modelName),
 		Messages:        messages,
 		System:          systemPrompts,
-		InferenceConfig: buildInferenceConfig(cfg),
+		InferenceConfig: inferenceConfig,
 	}
 
 	if cfg != nil {
@@ -282,11 +304,12 @@ func mediaMIME(part *ai.Part) string {
 // bare base64 string and returns decoded bytes. Bedrock expects raw bytes; the
 // SDK base64-encodes them for the wire.
 func decodeMediaPayload(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, errors.New("bedrock: media part has empty data")
 	}
 	if i := strings.Index(s, ";base64,"); i >= 0 {
-		s = s[i+len(";base64,"):]
+		s = strings.TrimSpace(s[i+len(";base64,"):])
 	} else if strings.HasPrefix(s, "data:") {
 		return nil, errors.New("bedrock: data URL must be base64-encoded (use ';base64,' prefix)")
 	} else if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
@@ -364,13 +387,17 @@ func (b *Bedrock) convertResponse(response *bedrockruntime.ConverseOutput, origi
 		return nil, errors.New("bedrock: converse response is nil")
 	}
 
-	msgMember, ok := response.Output.(*types.ConverseOutputMemberMessage)
-	if !ok {
-		return nil, fmt.Errorf("bedrock: unexpected output variant %T", response.Output)
-	}
-	parts, err := b.contentBlocksToParts(msgMember.Value.Content, originalInput)
-	if err != nil {
-		return nil, err
+	var parts []*ai.Part
+	if response.Output != nil {
+		msgMember, ok := response.Output.(*types.ConverseOutputMemberMessage)
+		if !ok {
+			return nil, fmt.Errorf("bedrock: unexpected output variant %T", response.Output)
+		}
+		var err error
+		parts, err = b.contentBlocksToParts(msgMember.Value.Content, originalInput)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(parts) == 0 {
 		parts = append(parts, ai.NewTextPart(""))
@@ -532,38 +559,46 @@ func configFromGenerationCommonConfig(v *ai.GenerationCommonConfig) *Config {
 	return cfg
 }
 
-// buildInferenceConfig maps a *Config onto Bedrock's InferenceConfiguration.
-// A non-nil pointer is always returned because most models require MaxTokens.
-func buildInferenceConfig(cfg *Config) *types.InferenceConfiguration {
-	ic := &types.InferenceConfiguration{}
-	maxTokens := defaultMaxTokens
-	if cfg != nil && cfg.MaxTokens > 0 {
-		maxTokens = cfg.MaxTokens
+func defaultMaxTokensForModel(modelName string) (int32, bool) {
+	name := strings.ToLower(modelName)
+	if !strings.Contains(name, "claude") {
+		return 0, false
 	}
-	ic.MaxTokens = aws.Int32(int32(maxTokens))
-	if cfg != nil {
-		ic.Temperature = cfg.Temperature
-		ic.TopP = cfg.TopP
-		if len(cfg.StopSequences) > 0 {
-			ic.StopSequences = cfg.StopSequences
+	for _, pattern := range extendedClaudeMaxTokenPatterns {
+		if strings.Contains(name, pattern) {
+			return defaultExtendedClaudeMaxTokens, true
 		}
 	}
-	return ic
+	return defaultClaudeMaxTokens, true
 }
 
-// buildToolChoice maps a ToolChoice string constant to the Bedrock union type.
-// The caller is responsible for ensuring choice is non-empty and not ToolChoiceNone.
-func buildToolChoice(choice string) types.ToolChoice {
-	switch choice {
-	case ToolChoiceAuto:
-		return &types.ToolChoiceMemberAuto{}
-	case ToolChoiceRequired, ToolChoiceAny:
-		return &types.ToolChoiceMemberAny{}
-	default:
-		return &types.ToolChoiceMemberTool{
-			Value: types.SpecificToolChoice{Name: aws.String(choice)},
-		}
+// buildInferenceConfig maps a *Config onto Bedrock's InferenceConfiguration.
+func buildInferenceConfig(cfg *Config) *types.InferenceConfiguration {
+	if cfg == nil {
+		return nil
 	}
+	ic := &types.InferenceConfiguration{}
+	set := false
+	if cfg.MaxTokens > 0 {
+		ic.MaxTokens = aws.Int32(int32(cfg.MaxTokens))
+		set = true
+	}
+	if cfg.Temperature != nil {
+		ic.Temperature = cfg.Temperature
+		set = true
+	}
+	if cfg.TopP != nil {
+		ic.TopP = cfg.TopP
+		set = true
+	}
+	if len(cfg.StopSequences) > 0 {
+		ic.StopSequences = cfg.StopSequences
+		set = true
+	}
+	if !set {
+		return nil
+	}
+	return ic
 }
 
 func (b *Bedrock) convertTools(tools []*ai.ToolDefinition) ([]types.Tool, error) {
@@ -764,6 +799,8 @@ func (b *Bedrock) convertValueWithSchema(value interface{}, schema map[string]an
 			if floatVal, err := num.Float64(); err == nil {
 				return int64(floatVal)
 			}
+		case "string":
+			return num.String()
 		}
 	}
 
