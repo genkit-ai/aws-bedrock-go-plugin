@@ -205,55 +205,58 @@ func TestConvertResponse_TextSkipsReasoning(t *testing.T) {
 // --- Streaming --------------------------------------------------------------
 
 func TestAppendReasoningDelta(t *testing.T) {
-	acc := &streamAccumulator{}
+	block := &streamBlock{}
 
-	part, err := appendReasoningDelta(acc, &types.ReasoningContentBlockDeltaMemberText{Value: "thinking"})
+	part, err := appendReasoningDelta(block, &types.ReasoningContentBlockDeltaMemberText{Value: "thinking"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if part == nil || !part.IsReasoning() || part.Text != "thinking" {
 		t.Fatalf("text delta part = %+v, want reasoning %q", part, "thinking")
 	}
-	if got := acc.reasoning.String(); got != "thinking" {
+	if got := block.reasoning.String(); got != "thinking" {
 		t.Errorf("accumulated reasoning = %q, want thinking", got)
 	}
 
-	part, err = appendReasoningDelta(acc, &types.ReasoningContentBlockDeltaMemberSignature{Value: "sig"})
+	part, err = appendReasoningDelta(block, &types.ReasoningContentBlockDeltaMemberSignature{Value: "sig"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if part != nil {
 		t.Fatalf("signature delta returned part %v, want nil", part)
 	}
-	if acc.reasoningSignature != "sig" {
-		t.Errorf("signature = %q, want sig", acc.reasoningSignature)
+	if block.reasoningSignature != "sig" {
+		t.Errorf("signature = %q, want sig", block.reasoningSignature)
 	}
 
-	part, err = appendReasoningDelta(acc, &types.ReasoningContentBlockDeltaMemberRedactedContent{Value: []byte("encrypted")})
+	part, err = appendReasoningDelta(block, &types.ReasoningContentBlockDeltaMemberRedactedContent{Value: []byte("encrypted")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if part != nil {
 		t.Fatalf("redacted delta returned part %v, want nil", part)
 	}
-	if string(acc.redactedReasoning) != "encrypted" {
-		t.Errorf("redacted = %q, want encrypted", string(acc.redactedReasoning))
+	if string(block.redactedReasoning) != "encrypted" {
+		t.Errorf("redacted = %q, want encrypted", string(block.redactedReasoning))
 	}
 }
 
 func TestAppendReasoningDelta_UnknownErrors(t *testing.T) {
-	if _, err := appendReasoningDelta(&streamAccumulator{}, &types.UnknownUnionMember{Tag: "future_reasoning_delta"}); err == nil {
+	if _, err := appendReasoningDelta(&streamBlock{}, &types.UnknownUnionMember{Tag: "future_reasoning_delta"}); err == nil {
 		t.Fatal("expected error for unknown reasoning delta")
 	}
 }
 
 func TestStreamFinalContent_ReasoningReassembly(t *testing.T) {
-	acc := &streamAccumulator{reasoningSignature: "sig", redactedReasoning: []byte("encrypted")}
-	acc.reasoning.WriteString("First thought. ")
-	acc.reasoning.WriteString("Second thought.")
-	acc.text.WriteString("Final answer.")
+	block := &streamBlock{reasoningSignature: "sig", redactedReasoning: []byte("encrypted")}
+	block.reasoning.WriteString("First thought. ")
+	block.reasoning.WriteString("Second thought.")
+	block.text.WriteString("Final answer.")
 
-	parts := acc.finalContent()
+	parts, err := (&Bedrock{}).blocksToParts(map[int32]*streamBlock{0: block}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(parts) != 2 {
 		t.Fatalf("len(parts) = %d, want 2", len(parts))
 	}

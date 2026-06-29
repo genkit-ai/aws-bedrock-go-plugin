@@ -33,6 +33,7 @@ package bedrock
 import (
 	"context"
 	"flag"
+	"strings"
 	"testing"
 
 	"github.com/firebase/genkit/go/ai"
@@ -194,5 +195,69 @@ func TestBedrockLive_ClaudeReasoningStream(t *testing.T) {
 	}
 	if resp.Text() == "" {
 		t.Error("final response text is empty")
+	}
+}
+
+// TestBedrockLive_ClaudeStreamingToolCall confirms streamed tool-use blocks are
+// reassembled into a complete tool request, delivered to the stream callback,
+// and accepted by Genkit's tool execution loop.
+func TestBedrockLive_ClaudeStreamingToolCall(t *testing.T) {
+	ctx, g, m := requireLiveClaude(t)
+
+	type weatherIn struct {
+		Location string `json:"location" jsonschema:"description=City to look up"`
+	}
+	toolCalls := 0
+	weatherTool := genkit.DefineTool(g, "get_streaming_weather",
+		"Get the current weather for a city.",
+		func(ctx *ai.ToolContext, input weatherIn) (string, error) {
+			toolCalls++
+			return "72F in San Francisco", nil
+		})
+
+	var textChunks, toolRequestChunks int
+	resp, err := genkit.Generate(ctx, g,
+		ai.WithModel(m),
+		ai.WithSystem("Use the get_streaming_weather tool whenever weather is requested."),
+		ai.WithPrompt("Use the weather tool for San Francisco, then answer with the temperature."),
+		ai.WithTools(weatherTool),
+		ai.WithConfig(&Config{
+			MaxTokens: 256,
+		}),
+		ai.WithStreaming(func(ctx context.Context, c *ai.ModelResponseChunk) error {
+			for _, p := range c.Content {
+				switch {
+				case p.IsToolRequest():
+					toolRequestChunks++
+					if p.ToolRequest.Name != "get_streaming_weather" {
+						t.Errorf("streamed tool name = %q, want get_streaming_weather", p.ToolRequest.Name)
+					}
+					if p.ToolRequest.Ref == "" {
+						t.Error("streamed tool request missing ref")
+					}
+					if p.ToolRequest.Input == nil {
+						t.Error("streamed tool request missing input")
+					}
+				case p.IsText():
+					textChunks++
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toolRequestChunks == 0 {
+		t.Fatal("expected at least one streamed tool request chunk")
+	}
+	if toolCalls == 0 {
+		t.Fatal("expected weather tool to be invoked")
+	}
+	if textChunks == 0 {
+		t.Error("expected at least one streamed text chunk")
+	}
+	if !strings.Contains(resp.Text(), "72") {
+		t.Errorf("final response = %q, want it to include 72", resp.Text())
 	}
 }
