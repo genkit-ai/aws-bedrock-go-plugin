@@ -793,6 +793,8 @@ func (b *Bedrock) convertValueWithSchema(value interface{}, schema map[string]an
 			if floatVal, err := num.Float64(); err == nil {
 				return int64(floatVal)
 			}
+		case "string":
+			return num.String()
 		}
 	}
 

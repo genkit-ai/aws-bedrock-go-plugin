@@ -1103,6 +1103,14 @@ func TestConvertValueWithSchema_NumericConversions(t *testing.T) {
 	}
 }
 
+func TestConvertValueWithSchema_JSONNumberToString(t *testing.T) {
+	b := &Bedrock{}
+	got := b.convertValueWithSchema(json.Number("123"), map[string]any{"type": "string"})
+	if got != "123" {
+		t.Fatalf("got %#v (%T), want string 123", got, got)
+	}
+}
+
 func TestConvertValueWithSchema_ArrayConversion(t *testing.T) {
 	b := &Bedrock{}
 	arr := []any{int(1), int(2), int(3)}
