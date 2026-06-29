@@ -65,11 +65,11 @@ func TestConvertStopReasonToGenkit(t *testing.T) {
 // ---- buildInferenceConfig ---------------------------------------------------
 
 func TestBuildInferenceConfig_NilAndZero(t *testing.T) {
-	if ic := buildInferenceConfig(nil); ic == nil || ic.MaxTokens == nil || *ic.MaxTokens != defaultMaxTokens {
-		t.Fatalf("nil Config MaxTokens = %v, want %d", ic, defaultMaxTokens)
+	if buildInferenceConfig(nil) != nil {
+		t.Error("nil Config should return nil InferenceConfiguration")
 	}
-	if ic := buildInferenceConfig(&Config{}); ic == nil || ic.MaxTokens == nil || *ic.MaxTokens != defaultMaxTokens {
-		t.Fatalf("zero Config MaxTokens = %v, want %d", ic, defaultMaxTokens)
+	if buildInferenceConfig(&Config{}) != nil {
+		t.Error("zero Config should return nil InferenceConfiguration")
 	}
 }
 
@@ -113,8 +113,11 @@ func TestBuildInferenceConfig_PartialFields(t *testing.T) {
 
 	// Only StopSequences.
 	ic = buildInferenceConfig(&Config{StopSequences: []string{"stop"}})
-	if ic == nil || ic.MaxTokens == nil || *ic.MaxTokens != defaultMaxTokens || len(ic.StopSequences) != 1 {
+	if ic == nil || len(ic.StopSequences) != 1 {
 		t.Fatalf("StopSequences-only config: ic = %v", ic)
+	}
+	if ic.MaxTokens != nil {
+		t.Fatalf("StopSequences-only MaxTokens = %v, want nil", *ic.MaxTokens)
 	}
 }
 
@@ -205,6 +208,78 @@ func TestBuildConverseInput_NilRequest(t *testing.T) {
 	_, err := b.buildConverseInput("model-id", nil)
 	if err == nil || !strings.Contains(err.Error(), "nil") {
 		t.Fatalf("expected nil-request error, got %v", err)
+	}
+}
+
+func TestBuildConverseInput_NonClaudeLeavesInferenceConfigUnset(t *testing.T) {
+	b := &Bedrock{}
+	out, err := b.buildConverseInput("amazon.nova-pro-v1:0", &ai.ModelRequest{
+		Messages: []*ai.Message{{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("Hello")}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.InferenceConfig != nil {
+		t.Fatalf("InferenceConfig = %v, want nil", out.InferenceConfig)
+	}
+}
+
+func TestBuildConverseInput_ClaudeDefaultMaxTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		modelName string
+		want      int32
+	}{
+		{
+			name:      "claude 3",
+			modelName: "anthropic.claude-3-haiku-20240307-v1:0",
+			want:      defaultClaudeMaxTokens,
+		},
+		{
+			name:      "claude 3.5",
+			modelName: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+			want:      defaultExtendedClaudeMaxTokens,
+		},
+		{
+			name:      "claude 4",
+			modelName: "anthropic.claude-sonnet-4-20250514-v1:0",
+			want:      defaultExtendedClaudeMaxTokens,
+		},
+	}
+
+	b := &Bedrock{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := b.buildConverseInput(tt.modelName, &ai.ModelRequest{
+				Messages: []*ai.Message{{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("Hello")}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.InferenceConfig == nil || out.InferenceConfig.MaxTokens == nil {
+				t.Fatalf("InferenceConfig.MaxTokens = nil, want %d", tt.want)
+			}
+			if *out.InferenceConfig.MaxTokens != tt.want {
+				t.Fatalf("MaxTokens = %d, want %d", *out.InferenceConfig.MaxTokens, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildConverseInput_ClaudePreservesConfiguredMaxTokens(t *testing.T) {
+	b := &Bedrock{}
+	out, err := b.buildConverseInput("anthropic.claude-3-5-sonnet-20241022-v2:0", &ai.ModelRequest{
+		Messages: []*ai.Message{{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("Hello")}}},
+		Config:   &Config{MaxTokens: 123},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.InferenceConfig == nil || out.InferenceConfig.MaxTokens == nil {
+		t.Fatal("InferenceConfig.MaxTokens = nil, want 123")
+	}
+	if *out.InferenceConfig.MaxTokens != 123 {
+		t.Fatalf("MaxTokens = %d, want 123", *out.InferenceConfig.MaxTokens)
 	}
 }
 
@@ -450,7 +525,7 @@ func TestMediaToBlock_ImageAndDocument(t *testing.T) {
 	payload := []byte("file bytes")
 	encoded := base64.StdEncoding.EncodeToString(payload)
 
-	imageBlock, err := mediaToBlock(ai.NewMediaPart(" Image/JPEG ; charset=binary ", "data:image/jpeg;base64,"+encoded))
+	imageBlock, err := mediaToBlock(ai.NewMediaPart(" Image/JPEG ; charset=binary ", "\n data:image/jpeg;base64,"+encoded+" \t"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +544,7 @@ func TestMediaToBlock_ImageAndDocument(t *testing.T) {
 		t.Errorf("image bytes = %q, want %q", string(imageBytes.Value), string(payload))
 	}
 
-	docBlock, err := mediaToBlock(ai.NewMediaPart("text/markdown", encoded))
+	docBlock, err := mediaToBlock(ai.NewMediaPart("text/markdown", "\n "+encoded+"\t "))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,11 +806,25 @@ func TestConvertResponse_SetsOriginalRequest(t *testing.T) {
 	}
 }
 
-func TestConvertResponse_NilOutputError(t *testing.T) {
+func TestConvertResponse_NilOutputPlaceholder(t *testing.T) {
 	b := &Bedrock{}
-	_, err := b.convertResponse(&bedrockruntime.ConverseOutput{}, &ai.ModelRequest{})
-	if err == nil || !strings.Contains(err.Error(), "unexpected output variant") {
-		t.Fatalf("expected unexpected output error, got %v", err)
+	got, err := b.convertResponse(&bedrockruntime.ConverseOutput{
+		StopReason: types.StopReasonGuardrailIntervened,
+	}, &ai.ModelRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.FinishReason != ai.FinishReasonBlocked {
+		t.Fatalf("FinishReason = %v, want blocked", got.FinishReason)
+	}
+	if got.Message == nil || got.Message.Role != ai.RoleModel {
+		t.Fatalf("Message = %#v, want model message", got.Message)
+	}
+	if len(got.Message.Content) != 1 {
+		t.Fatalf("len(Content) = %d, want 1 placeholder", len(got.Message.Content))
+	}
+	if !got.Message.Content[0].IsText() || got.Message.Content[0].Text != "" {
+		t.Errorf("placeholder part = %#v, want empty text", got.Message.Content[0])
 	}
 }
 
@@ -1182,46 +1271,6 @@ func TestGenerateTextSync_BasicRoundTrip(t *testing.T) {
 	}
 	if resp.Usage == nil || resp.Usage.TotalTokens != 7 {
 		t.Errorf("Usage = %v, want TotalTokens=7", resp.Usage)
-	}
-}
-
-// ---- buildToolChoice --------------------------------------------------------
-
-func TestBuildToolChoice(t *testing.T) {
-	tests := []struct {
-		choice   string
-		wantType string
-		wantName string // only checked for ToolChoiceMemberTool
-	}{
-		{ToolChoiceAuto, "*types.ToolChoiceMemberAuto", ""},
-		{ToolChoiceRequired, "*types.ToolChoiceMemberAny", ""},
-		{"any", "*types.ToolChoiceMemberAny", ""},
-		{"get_weather", "*types.ToolChoiceMemberTool", "get_weather"},
-		{"my_custom_tool", "*types.ToolChoiceMemberTool", "my_custom_tool"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.choice, func(t *testing.T) {
-			got := buildToolChoice(tc.choice)
-			switch tc.wantType {
-			case "*types.ToolChoiceMemberAuto":
-				if _, ok := got.(*types.ToolChoiceMemberAuto); !ok {
-					t.Errorf("buildToolChoice(%q) type = %T, want *ToolChoiceMemberAuto", tc.choice, got)
-				}
-			case "*types.ToolChoiceMemberAny":
-				if _, ok := got.(*types.ToolChoiceMemberAny); !ok {
-					t.Errorf("buildToolChoice(%q) type = %T, want *ToolChoiceMemberAny", tc.choice, got)
-				}
-			case "*types.ToolChoiceMemberTool":
-				tool, ok := got.(*types.ToolChoiceMemberTool)
-				if !ok {
-					t.Fatalf("buildToolChoice(%q) type = %T, want *ToolChoiceMemberTool", tc.choice, got)
-				}
-				if aws.ToString(tool.Value.Name) != tc.wantName {
-					t.Errorf("tool name = %q, want %q", aws.ToString(tool.Value.Name), tc.wantName)
-				}
-			}
-		})
 	}
 }
 

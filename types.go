@@ -90,8 +90,8 @@ const (
 // Claude extended thinking can be enabled through AdditionalModelRequestFields.
 type Config struct {
 	// MaxTokens is the upper bound on the generated response length. When 0, the
-	// plugin sends a default of 4096 because Bedrock requires this field for
-	// most Converse models.
+	// plugin leaves the field unset except for Claude models, where Bedrock
+	// requires a value.
 	MaxTokens int `json:"maxTokens,omitempty"`
 
 	// Temperature controls sampling randomness. nil leaves it to the model default.
