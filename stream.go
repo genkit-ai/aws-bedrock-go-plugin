@@ -19,19 +19,25 @@ package bedrock
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"sort"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/firebase/genkit/go/ai"
 )
 
+var errStreamBlockRequired = errors.New("bedrock: stream block is nil")
+
 func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.ConverseInput, originalInput *ai.ModelRequest, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
 	ctx, cancel := b.withRequestTimeout(ctx)
 	defer cancel()
 
-	// Convert ConverseInput to ConverseStreamInput
 	streamInput := &bedrockruntime.ConverseStreamInput{
 		ModelId:                      input.ModelId,
 		Messages:                     input.Messages,
@@ -41,7 +47,6 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 		AdditionalModelRequestFields: input.AdditionalModelRequestFields,
 	}
 
-	// Call Bedrock ConverseStream API
 	streamOutput, err := b.client.ConverseStream(ctx, streamInput)
 	if err != nil {
 		return nil, fmt.Errorf("bedrock converse stream failed: %w", err)
@@ -52,128 +57,237 @@ func (b *Bedrock) generateTextStream(ctx context.Context, input *bedrockruntime.
 	}
 	defer func() {
 		if closeErr := stream.Close(); closeErr != nil {
-			// Log the error but don't fail the operation
-			// In a real implementation, you might want to use a proper logger
 			_ = closeErr
 		}
 	}()
 
-	// Accumulate streamed content. Reasoning ("thinking") deltas are tracked
-	// separately from plain text so the signed/redacted reasoning can be
-	// attached to the final response and replayed on the next turn.
-	acc := &streamAccumulator{}
-	var finalResponse *ai.ModelResponse
-	var stopReason types.StopReason
-
-	// Process stream events
-	for event := range stream.Events() {
-		switch e := event.(type) {
-
-		case *types.ConverseStreamOutputMemberContentBlockDelta:
-			deltaEvent := e.Value
-			if deltaEvent.Delta == nil {
-				continue
-			}
-			switch delta := deltaEvent.Delta.(type) {
-			case *types.ContentBlockDeltaMemberText:
-				acc.text.WriteString(delta.Value)
-				chunk := &ai.ModelResponseChunk{
-					Index:   0,
-					Content: []*ai.Part{ai.NewTextPart(delta.Value)},
-				}
-				if err := cb(ctx, chunk); err != nil {
-					return nil, fmt.Errorf("callback error: %w", err)
-				}
-
-			case *types.ContentBlockDeltaMemberReasoningContent:
-				part, err := appendReasoningDelta(acc, delta.Value)
-				if err != nil {
-					return nil, err
-				}
-				if part != nil {
-					chunk := &ai.ModelResponseChunk{
-						Index:   0,
-						Content: []*ai.Part{part},
-					}
-					if err := cb(ctx, chunk); err != nil {
-						return nil, fmt.Errorf("callback error: %w", err)
-					}
-				}
-			}
-
-		case *types.ConverseStreamOutputMemberMessageStop:
-			// Message ended - prepare final response
-			stopEvent := e.Value
-			stopReason = stopEvent.StopReason
-
-			finalResponse = &ai.ModelResponse{
-				Message: &ai.Message{
-					Role:    ai.RoleModel,
-					Content: acc.finalContent(),
-				},
-				FinishReason: convertStopReasonToGenkit(stopReason),
-				Request:      originalInput,
-			}
-
-		}
+	finalResponse, err := b.consumeStreamEvents(ctx, stream.Events(), originalInput, cb)
+	if err != nil {
+		return nil, err
 	}
 	if err := stream.Err(); err != nil {
 		return nil, fmt.Errorf("bedrock converse stream error: %w", err)
 	}
-
-	// Return final response
-	if finalResponse == nil {
-		finalResponse = &ai.ModelResponse{
-			Message: &ai.Message{
-				Role:    ai.RoleModel,
-				Content: acc.finalContent(),
-			},
-			FinishReason: ai.FinishReasonStop,
-			Request:      originalInput,
-		}
-	}
-
 	return finalResponse, nil
 }
 
-// streamAccumulator collects streamed content across delta events. The current
-// streaming path reconstructs a single text block plus any reasoning;
-// block-indexed reassembly (e.g. for streamed tool-use) is a separate concern.
-type streamAccumulator struct {
+// streamBlock accumulates the state of a single content block across delta
+// events keyed by ContentBlockIndex.
+type streamBlock struct {
 	text               strings.Builder
 	reasoning          strings.Builder
 	reasoningSignature string
 	redactedReasoning  []byte
+	toolID             string
+	toolName           string
+	toolInput          strings.Builder
+	isTool             bool
 }
 
-// appendReasoningDelta folds a reasoning delta into the accumulator. Text deltas
-// are accumulated and returned as an emittable chunk; signature and redacted
-// deltas are accumulated silently (nil part) since they only matter for the
-// final, replayable reasoning part.
-func appendReasoningDelta(acc *streamAccumulator, delta types.ReasoningContentBlockDelta) (*ai.Part, error) {
+func (b *Bedrock) consumeStreamEvents(ctx context.Context, events <-chan types.ConverseStreamOutput, originalInput *ai.ModelRequest, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
+	blocks := map[int32]*streamBlock{}
+	var stopReason types.StopReason
+	var usage *types.TokenUsage
+
+	for event := range events {
+		switch e := event.(type) {
+		case *types.ConverseStreamOutputMemberMessageStart:
+			// The outbound role is always assistant/model.
+		case *types.ConverseStreamOutputMemberContentBlockStart:
+			idx := indexOf(e.Value.ContentBlockIndex)
+			block := getOrInit(blocks, idx)
+			if startTool, ok := e.Value.Start.(*types.ContentBlockStartMemberToolUse); ok {
+				block.isTool = true
+				block.toolID = aws.ToString(startTool.Value.ToolUseId)
+				block.toolName = aws.ToString(startTool.Value.Name)
+			}
+		case *types.ConverseStreamOutputMemberContentBlockDelta:
+			if e.Value.Delta == nil {
+				continue
+			}
+			idx := indexOf(e.Value.ContentBlockIndex)
+			block := getOrInit(blocks, idx)
+			if err := appendContentBlockDelta(ctx, block, e.Value.Delta, cb); err != nil {
+				return nil, err
+			}
+		case *types.ConverseStreamOutputMemberContentBlockStop:
+			idx := indexOf(e.Value.ContentBlockIndex)
+			if err := b.emitToolBlockStop(ctx, idx, blocks[idx], originalInput, cb); err != nil {
+				return nil, err
+			}
+		case *types.ConverseStreamOutputMemberMessageStop:
+			stopReason = e.Value.StopReason
+		case *types.ConverseStreamOutputMemberMetadata:
+			usage = e.Value.Usage
+		default:
+			// Unknown top-level events are ignored so new Bedrock event types don't break streaming.
+		}
+	}
+
+	parts, err := b.blocksToParts(blocks, originalInput)
+	if err != nil {
+		return nil, err
+	}
+	if len(parts) == 0 {
+		parts = append(parts, ai.NewTextPart(""))
+	}
+	finishReason := convertStopReasonToGenkit(stopReason)
+	if stopReason == "" {
+		finishReason = ai.FinishReasonStop
+	}
+	return &ai.ModelResponse{
+		Message:      &ai.Message{Role: ai.RoleModel, Content: parts},
+		FinishReason: finishReason,
+		Usage:        usageFromTokens(usage),
+		Request:      originalInput,
+	}, nil
+}
+
+// blocksToParts assembles accumulated stream state in ContentBlockIndex order.
+func (b *Bedrock) blocksToParts(blocks map[int32]*streamBlock, originalInput *ai.ModelRequest) ([]*ai.Part, error) {
+	idxs := make([]int32, 0, len(blocks))
+	for idx := range blocks {
+		idxs = append(idxs, idx)
+	}
+	sort.Slice(idxs, func(i, j int) bool { return idxs[i] < idxs[j] })
+
+	parts := make([]*ai.Part, 0, len(idxs))
+	for _, idx := range idxs {
+		block := blocks[idx]
+		if block == nil {
+			continue
+		}
+		if block.isTool {
+			part, err := b.toolBlockToPart(idx, block, originalInput)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
+			continue
+		}
+		if block.reasoning.Len() > 0 || len(block.redactedReasoning) > 0 {
+			parts = append(parts, newBedrockReasoningPart(block.reasoning.String(), block.reasoningSignature, block.redactedReasoning))
+		}
+		if block.text.Len() > 0 {
+			parts = append(parts, ai.NewTextPart(block.text.String()))
+		}
+	}
+	return parts, nil
+}
+
+func appendContentBlockDelta(ctx context.Context, block *streamBlock, delta types.ContentBlockDelta, cb func(context.Context, *ai.ModelResponseChunk) error) error {
+	if block == nil {
+		return errStreamBlockRequired
+	}
+	switch d := delta.(type) {
+	case *types.ContentBlockDeltaMemberText:
+		block.text.WriteString(d.Value)
+		if cb != nil {
+			if err := cb(ctx, &ai.ModelResponseChunk{Index: 0, Content: []*ai.Part{ai.NewTextPart(d.Value)}}); err != nil {
+				return fmt.Errorf("callback error: %w", err)
+			}
+		}
+	case *types.ContentBlockDeltaMemberToolUse:
+		block.isTool = true
+		block.toolInput.WriteString(aws.ToString(d.Value.Input))
+	case *types.ContentBlockDeltaMemberReasoningContent:
+		part, err := appendReasoningDelta(block, d.Value)
+		if err != nil {
+			return err
+		}
+		if part != nil && cb != nil {
+			if err := cb(ctx, &ai.ModelResponseChunk{Index: 0, Content: []*ai.Part{part}}); err != nil {
+				return fmt.Errorf("callback error: %w", err)
+			}
+		}
+	default:
+		return fmt.Errorf("bedrock: unhandled stream content delta variant %T", delta)
+	}
+	return nil
+}
+
+func appendReasoningDelta(block *streamBlock, delta types.ReasoningContentBlockDelta) (*ai.Part, error) {
+	if block == nil {
+		return nil, errStreamBlockRequired
+	}
 	switch d := delta.(type) {
 	case *types.ReasoningContentBlockDeltaMemberText:
-		acc.reasoning.WriteString(d.Value)
+		block.reasoning.WriteString(d.Value)
 		return newBedrockReasoningPart(d.Value, "", nil), nil
 	case *types.ReasoningContentBlockDeltaMemberSignature:
-		acc.reasoningSignature = d.Value
-		return nil, nil
+		block.reasoningSignature = d.Value
 	case *types.ReasoningContentBlockDeltaMemberRedactedContent:
-		acc.redactedReasoning = append(acc.redactedReasoning, d.Value...)
-		return nil, nil
+		block.redactedReasoning = append(block.redactedReasoning, d.Value...)
 	default:
 		return nil, fmt.Errorf("bedrock: unhandled stream reasoning delta variant %T", delta)
 	}
+	return nil, nil
 }
 
-// finalContent assembles the accumulated stream state into response parts. Any
-// reasoning precedes the text so the assistant turn replays in the order
-// thinking models require.
-func (acc *streamAccumulator) finalContent() []*ai.Part {
-	var parts []*ai.Part
-	if acc.reasoning.Len() > 0 || len(acc.redactedReasoning) > 0 {
-		parts = append(parts, newBedrockReasoningPart(acc.reasoning.String(), acc.reasoningSignature, acc.redactedReasoning))
+func (b *Bedrock) emitToolBlockStop(ctx context.Context, idx int32, block *streamBlock, originalInput *ai.ModelRequest, cb func(context.Context, *ai.ModelResponseChunk) error) error {
+	if block == nil || !block.isTool || cb == nil {
+		return nil
 	}
-	parts = append(parts, ai.NewTextPart(acc.text.String()))
-	return parts
+	part, err := b.toolBlockToPart(idx, block, originalInput)
+	if err != nil {
+		return err
+	}
+	if err := cb(ctx, &ai.ModelResponseChunk{Index: 0, Content: []*ai.Part{part}}); err != nil {
+		return fmt.Errorf("callback error: %w", err)
+	}
+	return nil
+}
+
+func (b *Bedrock) toolBlockToPart(idx int32, block *streamBlock, originalInput *ai.ModelRequest) (*ai.Part, error) {
+	input, err := decodeToolInput(block.toolInput.String())
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: stream tool block %d: %w", idx, err)
+	}
+	if inputMap, ok := input.(map[string]any); ok {
+		var tools []*ai.ToolDefinition
+		if originalInput != nil {
+			tools = originalInput.Tools
+		}
+		input = b.convertToolInputTypes(inputMap, block.toolName, tools)
+	}
+	return ai.NewToolRequestPart(&ai.ToolRequest{
+		Ref:   block.toolID,
+		Name:  block.toolName,
+		Input: input,
+	}), nil
+}
+
+func decodeToolInput(s string) (any, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(s))
+	decoder.UseNumber()
+	var v any
+	if err := decoder.Decode(&v); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(&v); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("bedrock: tool input contains trailing data after JSON value")
+		}
+		return nil, err
+	}
+	return v, nil
+}
+
+func getOrInit(blocks map[int32]*streamBlock, idx int32) *streamBlock {
+	if block, ok := blocks[idx]; ok {
+		return block
+	}
+	block := &streamBlock{}
+	blocks[idx] = block
+	return block
+}
+
+func indexOf(idx *int32) int32 {
+	if idx == nil {
+		return 0
+	}
+	return *idx
 }
