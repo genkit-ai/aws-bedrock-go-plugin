@@ -126,6 +126,14 @@ type Config struct {
 // ConfigSchema on every defined Converse model.
 func configSchema() map[string]any { return core.InferSchemaMap(Config{}) }
 
+// imageConfigSchema returns a permissive JSON schema for image model config.
+// Each image family (Titan/Nova Canvas nested imageGenerationConfig, legacy
+// Stable Diffusion, modern Stability) accepts a different flat or nested
+// shape, so — unlike [configSchema] — this intentionally has no "properties"
+// or "additionalProperties" restriction, letting any family-specific override
+// through genkit's request validation.
+func imageConfigSchema() map[string]any { return map[string]any{"type": "object"} }
+
 // newBedrockReasoningPart builds an ai reasoning part carrying the Bedrock
 // signature and/or redacted bytes needed to replay it on the next turn. The
 // signature is also stored under the generic "signature" key (via
