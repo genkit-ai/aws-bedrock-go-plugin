@@ -20,12 +20,14 @@ package bedrock
 import (
 	"context"
 	"encoding/base64"
+	"reflect"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/core/api"
 	"github.com/firebase/genkit/go/genkit"
 )
 
@@ -37,7 +39,9 @@ func TestInferModelCapabilities_WithInferenceProfiles(t *testing.T) {
 		modelName        string
 		modelType        string
 		expectTools      bool
+		expectToolChoice bool
 		expectMultimodal bool
+		expectStage      ai.ModelStage
 	}{
 		// Direct model IDs (no prefix)
 		{
@@ -45,21 +49,27 @@ func TestInferModelCapabilities_WithInferenceProfiles(t *testing.T) {
 			modelName:        "anthropic.claude-3-haiku-20240307-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: true,
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "claude-3-5-haiku direct - tools only",
 			modelName:        "anthropic.claude-3-5-haiku-20241022-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: false,
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "nova-micro direct - tools only",
 			modelName:        "amazon.nova-micro-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: false,
+			expectStage:      ai.ModelStageStable,
 		},
 		// With inference profile prefixes
 		{
@@ -67,57 +77,73 @@ func TestInferModelCapabilities_WithInferenceProfiles(t *testing.T) {
 			modelName:        "us.anthropic.claude-3-haiku-20240307-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: true,
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "eu prefix - claude-3-5-sonnet",
 			modelName:        "eu.anthropic.claude-3-5-sonnet-20241022-v2:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: true,
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "global prefix - nova-pro",
 			modelName:        "global.amazon.nova-pro-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: true,
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "apac prefix - llama3-2-11b (multimodal llama)",
 			modelName:        "apac.meta.llama3-2-11b-instruct-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: true,
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "jp prefix - llama3-8b (tools only)",
 			modelName:        "jp.meta.llama3-8b-instruct-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: false,
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "us-gov prefix - claude-opus-4",
 			modelName:        "us-gov.anthropic.claude-opus-4-20250514-v1:0",
 			modelType:        "chat",
 			expectTools:      true,
+			expectToolChoice: true,
 			expectMultimodal: true,
+			expectStage:      ai.ModelStageStable,
 		},
 		// Unknown models (not in capability map)
 		{
-			name:             "unknown model - no capabilities",
+			name:             "unknown model - modern Converse defaults",
 			modelName:        "unknown.model-v1:0",
 			modelType:        "chat",
-			expectTools:      false,
-			expectMultimodal: false,
+			expectTools:      true,
+			expectToolChoice: true,
+			expectMultimodal: true,
+			expectStage:      ai.ModelStageUnstable,
 		},
 		{
-			name:             "unknown model with prefix - no capabilities",
+			name:             "unknown model with prefix - modern Converse defaults",
 			modelName:        "us.unknown.model-v1:0",
 			modelType:        "chat",
-			expectTools:      false,
-			expectMultimodal: false,
+			expectTools:      true,
+			expectToolChoice: true,
+			expectMultimodal: true,
+			expectStage:      ai.ModelStageUnstable,
 		},
 		// Image and embedding types should ignore capability map
 		{
@@ -125,14 +151,18 @@ func TestInferModelCapabilities_WithInferenceProfiles(t *testing.T) {
 			modelName:        "amazon.titan-image-generator-v1",
 			modelType:        "image",
 			expectTools:      false,
+			expectToolChoice: false,
 			expectMultimodal: true, // Media output capability
+			expectStage:      ai.ModelStageStable,
 		},
 		{
 			name:             "embedding model type - no capabilities",
 			modelName:        "amazon.titan-embed-text-v1",
 			modelType:        "embedding",
 			expectTools:      false,
+			expectToolChoice: false,
 			expectMultimodal: false,
+			expectStage:      ai.ModelStageStable,
 		},
 	}
 
@@ -145,9 +175,24 @@ func TestInferModelCapabilities_WithInferenceProfiles(t *testing.T) {
 					tt.modelName, tt.modelType, info.Supports.Tools, tt.expectTools)
 			}
 
+			if info.Supports.ToolChoice != tt.expectToolChoice {
+				t.Errorf("inferModelCapabilities(%q, %q).Supports.ToolChoice = %v, want %v",
+					tt.modelName, tt.modelType, info.Supports.ToolChoice, tt.expectToolChoice)
+			}
+
 			if info.Supports.Media != tt.expectMultimodal {
 				t.Errorf("inferModelCapabilities(%q, %q).Supports.Media = %v, want %v",
 					tt.modelName, tt.modelType, info.Supports.Media, tt.expectMultimodal)
+			}
+
+			if info.Supports.Constrained != ai.ConstrainedSupportNone {
+				t.Errorf("inferModelCapabilities(%q, %q).Supports.Constrained = %v, want %v",
+					tt.modelName, tt.modelType, info.Supports.Constrained, ai.ConstrainedSupportNone)
+			}
+
+			if info.Stage != tt.expectStage {
+				t.Errorf("inferModelCapabilities(%q, %q).Stage = %v, want %v",
+					tt.modelName, tt.modelType, info.Stage, tt.expectStage)
 			}
 
 			// Verify the label preserves the original model name (including prefix)
@@ -163,12 +208,12 @@ func TestInferenceProfilePrefixes_Coverage(t *testing.T) {
 	// Verify all documented prefixes are in the list
 	expectedPrefixes := []string{
 		"global.",
+		"us-gov.",
 		"us.",
 		"eu.",
 		"jp.",
 		"apac.",
 		"au.",
-		"us-gov.",
 	}
 
 	if len(inferenceProfilePrefixes) != len(expectedPrefixes) {
@@ -218,6 +263,115 @@ func TestDefineModelRequiresInitializedPluginInstance(t *testing.T) {
 			Type: "chat",
 		}, nil)
 	})
+}
+
+func TestDefineModelRegistersInferredCapabilityMetadata(t *testing.T) {
+	ctx := context.Background()
+	b := testInitializedBedrock()
+	g := genkit.Init(ctx, genkit.WithPlugins(b))
+
+	m := b.DefineModel(g, ModelDefinition{
+		Name: "us.unknown.model-v1:0",
+		Type: "chat",
+	}, nil)
+
+	modelMeta := modelMetadata(t, m)
+	if got := modelMeta["label"]; got != "bedrock-us.unknown.model-v1:0" {
+		t.Fatalf("label = %v, want old default label", got)
+	}
+	if got := modelMeta["stage"]; got != ai.ModelStageUnstable {
+		t.Fatalf("stage = %v, want %v", got, ai.ModelStageUnstable)
+	}
+	if modelMeta["customOptions"] == nil {
+		t.Fatal("customOptions is nil, want generated Config schema")
+	}
+
+	supports, ok := modelMeta["supports"].(map[string]any)
+	if !ok {
+		t.Fatalf("supports = %T, want map[string]any", modelMeta["supports"])
+	}
+	for _, key := range []string{"tools", "toolChoice", "media", "multiturn", "systemRole"} {
+		if got := supports[key]; got != true {
+			t.Fatalf("supports[%q] = %v, want true", key, got)
+		}
+	}
+	if got := supports["constrained"]; got != ai.ConstrainedSupportNone {
+		t.Fatalf("supports[constrained] = %v, want %v", got, ai.ConstrainedSupportNone)
+	}
+}
+
+func TestDefineModelRegistersProvidedMetadata(t *testing.T) {
+	ctx := context.Background()
+	b := testInitializedBedrock()
+	g := genkit.Init(ctx, genkit.WithPlugins(b))
+
+	customSchema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"custom": map[string]any{"type": "string"}},
+	}
+	m := b.DefineModel(g, ModelDefinition{
+		Name: "anthropic.claude-3-haiku-20240307-v1:0",
+		Type: "chat",
+	}, &ai.ModelInfo{
+		Label:        "Custom Bedrock Label",
+		Stage:        ai.ModelStageDeprecated,
+		ConfigSchema: customSchema,
+		Supports: &ai.ModelSupports{
+			Multiturn:   true,
+			Tools:       true,
+			ToolChoice:  true,
+			SystemRole:  true,
+			Media:       false,
+			Constrained: ai.ConstrainedSupportNone,
+		},
+		Versions: []string{"custom-version"},
+	})
+
+	modelMeta := modelMetadata(t, m)
+	if got := modelMeta["label"]; got != "Custom Bedrock Label" {
+		t.Fatalf("label = %v, want custom label", got)
+	}
+	if got := modelMeta["stage"]; got != ai.ModelStageDeprecated {
+		t.Fatalf("stage = %v, want %v", got, ai.ModelStageDeprecated)
+	}
+	if got := modelMeta["customOptions"]; !reflect.DeepEqual(got, customSchema) {
+		t.Fatalf("customOptions = %v, want provided schema", got)
+	}
+
+	versions, ok := modelMeta["versions"].([]string)
+	if !ok {
+		t.Fatalf("versions = %T, want []string", modelMeta["versions"])
+	}
+	if len(versions) != 1 || versions[0] != "custom-version" {
+		t.Fatalf("versions = %v, want [custom-version]", versions)
+	}
+}
+
+func testInitializedBedrock() *Bedrock {
+	return &Bedrock{
+		Region: "us-east-1",
+		AWSConfig: &aws.Config{
+			Region: "us-east-1",
+			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(
+				"test-access-key",
+				"test-secret-key",
+				"",
+			)),
+		},
+	}
+}
+
+func modelMetadata(t *testing.T, m ai.Model) map[string]any {
+	t.Helper()
+	action, ok := m.(api.Action)
+	if !ok {
+		t.Fatalf("model = %T, want api.Action", m)
+	}
+	modelMeta, ok := action.Desc().Metadata["model"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata[model] = %T, want map[string]any", action.Desc().Metadata["model"])
+	}
+	return modelMeta
 }
 
 func assertPanicsWith(t *testing.T, want string, fn func()) {
