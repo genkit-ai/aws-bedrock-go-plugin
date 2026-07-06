@@ -150,14 +150,6 @@ func (b *Bedrock) DefineModel(g *genkit.Genkit, model ModelDefinition, info *ai.
 	if configSchemaMap == nil {
 		configSchemaMap = configSchema()
 	}
-	label := provider + "-" + model.Name
-	if providedInfo && info.Label != "" {
-		label = info.Label
-	}
-	configSchemaMap := info.ConfigSchema
-	if configSchemaMap == nil {
-		configSchemaMap = configSchema()
-	}
 
 	// Create model metadata
 	meta := &ai.ModelOptions{

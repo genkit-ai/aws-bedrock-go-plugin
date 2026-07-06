@@ -13,22 +13,8 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
-      "Bash(go vet *)",
       "Bash(gofmt -l .)",
-      "Bash(gofmt -w image_test.go)",
-      "Bash(gofmt -w image_live_test.go)",
-      "Bash(go doc *)",
-      "Bash(git stash *)",
-      "Bash(aws --version)",
-      "Bash(aws bedrock list-foundation-models *)",
-      "Bash(brew list *)",
-      "Bash(aws sts *)",
-      "Bash(mkdir -p /private/tmp/claude-501/-Users-adeshina-Workspace-employers-Invertase-aws-bedrock-go-plugin/e0ac0af0-f4bd-4e9c-a8e4-da81b11636ba/scratchpad/listmodels)",
-      "Bash(go mod *)",
-      "Bash(GOFLAGS=-mod=mod GONOSUMCHECK=1 GOSUMDB=off go mod tidy)",
-      "Bash(./listmodels)",
-      "Bash(wc -l /tmp_out.txt)",
-      "Bash(cat /tmp_out.txt)"
+      "Bash(go vet *)"
     ]
   }
 }
