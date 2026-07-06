@@ -131,6 +131,16 @@ func (b *Bedrock) DefineModel(g *genkit.Genkit, model ModelDefinition, info *ai.
 	// Auto-detect model capabilities if not provided
 	if info == nil {
 		info = b.inferModelCapabilities(model.Name, model.Type)
+	} else {
+		inferred := b.inferModelCapabilities(model.Name, model.Type)
+		copyInfo := *info
+		if copyInfo.Supports == nil {
+			copyInfo.Supports = inferred.Supports
+		}
+		if copyInfo.Stage == "" {
+			copyInfo.Stage = inferred.Stage
+		}
+		info = &copyInfo
 	}
 	label := provider + "-" + model.Name
 	if providedInfo && info.Label != "" {
