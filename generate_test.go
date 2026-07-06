@@ -224,6 +224,20 @@ func TestBuildConverseInput_NonClaudeLeavesInferenceConfigUnset(t *testing.T) {
 	}
 }
 
+func TestBuildConverseInput_PreservesInferenceProfileModelID(t *testing.T) {
+	b := &Bedrock{}
+	modelID := "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+	out, err := b.buildConverseInput(modelID, &ai.ModelRequest{
+		Messages: []*ai.Message{{Role: ai.RoleUser, Content: []*ai.Part{ai.NewTextPart("Hello")}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := aws.ToString(out.ModelId); got != modelID {
+		t.Fatalf("ModelId = %q, want %q", got, modelID)
+	}
+}
+
 func TestBuildConverseInput_ClaudeDefaultMaxTokens(t *testing.T) {
 	tests := []struct {
 		name      string

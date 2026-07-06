@@ -28,15 +28,16 @@ import (
 // stripped before checking capabilities.
 var inferenceProfilePrefixes = []string{
 	"global.",
+	"us-gov.",
 	"us.",
 	"eu.",
 	"jp.",
 	"apac.",
 	"au.",
-	"us-gov.",
 }
 
-// modelCapabilities maps model IDs to their capabilities.
+// modelCapabilities maps base Bedrock model IDs to their capabilities.
+// Inference profile prefixes are stripped before lookup.
 // This consolidates the previous multimodalModels and toolSupportedModels lists.
 var modelCapabilities = map[string]ModelCapability{
 	// Anthropic Claude 3 models
@@ -100,43 +101,63 @@ var modelCapabilities = map[string]ModelCapability{
 }
 
 // inferModelCapabilities infers model capabilities based on model name and type.
-// It strips any inference profile prefix before looking up capabilities.
+// It strips any inference profile prefix before looking up capabilities. Unknown
+// chat/text models use modern Converse defaults so newer or profile-only models
+// remain callable, but are marked unstable because they are outside the curated
+// capability registry.
 func (b *Bedrock) inferModelCapabilities(modelName, modelType string) *ai.ModelInfo {
 	// Strip inference profile prefix to get base model ID for capability lookup
 	baseModelID := b.stripInferenceProfilePrefix(modelName)
 
 	// Look up capabilities from the map
 	caps, found := modelCapabilities[baseModelID]
+	stage := ai.ModelStageStable
+	if !found {
+		caps = ModelCapability{
+			Multimodal: true,
+			Tools:      true,
+		}
+		stage = ai.ModelStageUnstable
+	}
 
 	switch modelType {
 	case "image":
 		return &ai.ModelInfo{
 			Label: modelName,
+			Stage: ai.ModelStageStable,
 			Supports: &ai.ModelSupports{
-				Multiturn:  false,
-				Tools:      false,
-				SystemRole: false,
-				Media:      true, // Can output images
+				Multiturn:   false,
+				Tools:       false,
+				ToolChoice:  false,
+				SystemRole:  false,
+				Media:       true, // Can output images
+				Constrained: ai.ConstrainedSupportNone,
 			},
 		}
 	case "embedding":
 		return &ai.ModelInfo{
 			Label: modelName,
+			Stage: ai.ModelStageStable,
 			Supports: &ai.ModelSupports{
-				Multiturn:  false,
-				Tools:      false,
-				SystemRole: false,
-				Media:      false,
+				Multiturn:   false,
+				Tools:       false,
+				ToolChoice:  false,
+				SystemRole:  false,
+				Media:       false,
+				Constrained: ai.ConstrainedSupportNone,
 			},
 		}
 	default: // chat, text models
 		return &ai.ModelInfo{
 			Label: modelName,
+			Stage: stage,
 			Supports: &ai.ModelSupports{
-				Multiturn:  true,
-				Tools:      found && caps.Tools,
-				SystemRole: true,
-				Media:      found && caps.Multimodal,
+				Multiturn:   true,
+				Tools:       caps.Tools,
+				ToolChoice:  caps.Tools,
+				SystemRole:  true,
+				Media:       caps.Multimodal,
+				Constrained: ai.ConstrainedSupportNone,
 			},
 		}
 	}

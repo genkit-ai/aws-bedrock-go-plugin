@@ -126,17 +126,38 @@ func (b *Bedrock) DefineModel(g *genkit.Genkit, model ModelDefinition, info *ai.
 		panic("bedrock: Init not called")
 	}
 
+	providedInfo := info != nil
+
 	// Auto-detect model capabilities if not provided
 	if info == nil {
 		info = b.inferModelCapabilities(model.Name, model.Type)
+	} else {
+		inferred := b.inferModelCapabilities(model.Name, model.Type)
+		copyInfo := *info
+		if copyInfo.Supports == nil {
+			copyInfo.Supports = inferred.Supports
+		}
+		if copyInfo.Stage == "" {
+			copyInfo.Stage = inferred.Stage
+		}
+		info = &copyInfo
+	}
+	label := provider + "-" + model.Name
+	if providedInfo && info.Label != "" {
+		label = info.Label
+	}
+	configSchemaMap := info.ConfigSchema
+	if configSchemaMap == nil {
+		configSchemaMap = configSchema()
 	}
 
 	// Create model metadata
 	meta := &ai.ModelOptions{
-		Label:        provider + "-" + model.Name,
+		Label:        label,
 		Supports:     info.Supports,
+		Stage:        info.Stage,
 		Versions:     info.Versions,
-		ConfigSchema: configSchema(),
+		ConfigSchema: configSchemaMap,
 	}
 
 	// Create the model function based on model type
