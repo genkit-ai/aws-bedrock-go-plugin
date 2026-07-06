@@ -187,7 +187,7 @@ func TestGenerateImage_ModernStabilityUsesPromptPayload(t *testing.T) {
 	assertImageResponse(t, resp, req, "modern-image")
 }
 
-func TestGenerateImage_ModernStabilityAppliesConfigOverride(t *testing.T) {
+func TestGenerateImage_ModernStabilityKeepsFixedDefaults(t *testing.T) {
 	var gotBody map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,14 +215,14 @@ func TestGenerateImage_ModernStabilityAppliesConfigOverride(t *testing.T) {
 	if got := gotBody["prompt"]; got != "modern stability" {
 		t.Fatalf("prompt = %v, want modern stability", got)
 	}
-	if got := gotBody["aspect_ratio"]; got != "16:9" {
-		t.Fatalf("aspect_ratio = %v, want 16:9", got)
+	if got := gotBody["aspect_ratio"]; got != nil {
+		t.Fatalf("aspect_ratio = %v, want absent", got)
 	}
-	if got := gotBody["seed"]; got != float64(42) {
-		t.Fatalf("seed = %v, want 42", got)
+	if got := gotBody["seed"]; got != nil {
+		t.Fatalf("seed = %v, want absent", got)
 	}
-	if got := gotBody["output_format"]; got != "jpeg" {
-		t.Fatalf("output_format = %v, want config override jpeg", got)
+	if got := gotBody["output_format"]; got != "png" {
+		t.Fatalf("output_format = %v, want fixed png", got)
 	}
 	assertImageResponse(t, resp, req, "modern-image")
 }
@@ -334,7 +334,7 @@ func TestGenerateImage_ConfigOverridesSurviveGenkitSchemaValidation(t *testing.T
 			response: `{"artifacts":[{"base64":"sdxl-image","finishReason":"SUCCESS"}]}`,
 		},
 		{
-			name:     "modern stability flat override",
+			name:     "modern stability fixed defaults with extra config",
 			model:    "stability.sd3-large-v1:0",
 			config:   map[string]any{"aspect_ratio": "16:9"},
 			response: `{"images":["modern-image"],"finish_reasons":["SUCCESS"]}`,

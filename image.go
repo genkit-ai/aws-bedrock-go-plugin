@@ -259,15 +259,6 @@ func (b *Bedrock) generateModernStabilityImage(ctx context.Context, modelName, p
 		"output_format": "png",
 	}
 
-	// Apply config if provided
-	if config != nil {
-		if configMap, ok := config.(map[string]interface{}); ok {
-			for k, v := range configMap {
-				requestBody[k] = v
-			}
-		}
-	}
-
 	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
