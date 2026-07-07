@@ -133,6 +133,12 @@ func (b *Bedrock) inferModelCapabilities(modelName, modelType string) *ai.ModelI
 				Media:       true, // Can output images
 				Constrained: ai.ConstrainedSupportNone,
 			},
+			// Image config shapes vary per model family (Titan/Nova Canvas nest
+			// options under imageGenerationConfig; Stability models take flat
+			// fields like cfg_scale or aspect_ratio). The shared text-generation
+			// Config schema would reject all of those as unknown properties, so
+			// image models get an open schema instead.
+			ConfigSchema: imageConfigSchema(),
 		}
 	case "embedding":
 		return &ai.ModelInfo{

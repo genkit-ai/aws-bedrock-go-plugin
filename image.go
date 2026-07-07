@@ -34,33 +34,84 @@ func (b *Bedrock) generateImage(ctx context.Context, modelName string, input *ai
 		return nil, fmt.Errorf("model request is nil")
 	}
 
-	// Extract prompt from the first message
-	var prompt string
-	if len(input.Messages) > 0 && len(input.Messages[0].Content) > 0 {
-		part := input.Messages[0].Content[0]
-		if part != nil && part.IsText() {
-			prompt = part.Text
-		}
-	}
+	prompt := imagePrompt(input)
 	if prompt == "" {
 		return nil, fmt.Errorf("no text prompt found for image generation")
 	}
 
 	// Generate image based on model type
+	var images []string
+	var err error
 	switch {
 	case strings.Contains(modelName, "titan-image"):
-		return b.generateTitanImage(ctx, modelName, prompt, input.Config, cb)
-	case strings.Contains(modelName, "stable-diffusion"), strings.Contains(modelName, "sd3-"), strings.Contains(modelName, "stable-image"):
-		return b.generateStableDiffusionImage(ctx, modelName, prompt, input.Config, cb)
+		images, err = b.generateTitanImage(ctx, modelName, prompt, input.Config, cb)
 	case strings.Contains(modelName, "nova-canvas"):
-		return b.generateNovaCanvasImage(ctx, modelName, prompt, input.Config, cb)
+		images, err = b.generateNovaCanvasImage(ctx, modelName, prompt, input.Config, cb)
+	case isModernStabilityImageModel(modelName):
+		images, err = b.generateModernStabilityImage(ctx, modelName, prompt, input.Config, cb)
+	case strings.Contains(modelName, "stable-diffusion"):
+		images, err = b.generateStableDiffusionImage(ctx, modelName, prompt, input.Config, cb)
 	default:
 		return nil, fmt.Errorf("unsupported image generation model: %s", modelName)
 	}
+	if err != nil {
+		return nil, err
+	}
+	return imageResponse(input, images)
+}
+
+func imagePrompt(input *ai.ModelRequest) string {
+	if input == nil {
+		return ""
+	}
+	for i := len(input.Messages) - 1; i >= 0; i-- {
+		msg := input.Messages[i]
+		if msg == nil || msg.Role != ai.RoleUser {
+			continue
+		}
+		var prompt strings.Builder
+		for _, part := range msg.Content {
+			if part != nil && part.IsText() {
+				prompt.WriteString(part.Text)
+			}
+		}
+		if prompt.Len() > 0 {
+			return prompt.String()
+		}
+	}
+	return ""
+}
+
+func isModernStabilityImageModel(modelName string) bool {
+	return strings.Contains(modelName, "sd3-") || strings.Contains(modelName, "stable-image")
+}
+
+func imageResponse(input *ai.ModelRequest, images []string) (*ai.ModelResponse, error) {
+	if len(images) == 0 {
+		return nil, fmt.Errorf("no images generated")
+	}
+	parts := make([]*ai.Part, 0, len(images))
+	for _, image := range images {
+		if image == "" {
+			continue
+		}
+		parts = append(parts, ai.NewMediaPart("image/png", "data:image/png;base64,"+image))
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("no images generated")
+	}
+	return &ai.ModelResponse{
+		Request: input,
+		Message: &ai.Message{
+			Role:    ai.RoleModel,
+			Content: parts,
+		},
+		FinishReason: ai.FinishReasonStop,
+	}, nil
 }
 
 // generateTitanImage generates images using Amazon Titan Image Generator
-func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
+func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
 	// Prepare request body for Titan Image Generator
 	requestBody := map[string]interface{}{
 		"taskType": "TEXT_IMAGE",
@@ -123,21 +174,11 @@ func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt stri
 	if len(result.Images) == 0 {
 		return nil, fmt.Errorf("no images generated")
 	}
-
-	// Create response with image data
-	return &ai.ModelResponse{
-		Message: &ai.Message{
-			Role: ai.RoleModel,
-			Content: []*ai.Part{
-				ai.NewMediaPart("image/png", "data:image/png;base64,"+result.Images[0]),
-			},
-		},
-		FinishReason: ai.FinishReasonStop,
-	}, nil
+	return result.Images, nil
 }
 
 // generateStableDiffusionImage generates images using Stability AI Stable Diffusion
-func (b *Bedrock) generateStableDiffusionImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
+func (b *Bedrock) generateStableDiffusionImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
 	// Prepare request body for Stable Diffusion
 	requestBody := map[string]interface{}{
 		"text_prompts": []map[string]interface{}{
@@ -200,20 +241,65 @@ func (b *Bedrock) generateStableDiffusionImage(ctx context.Context, modelName, p
 	if len(result.Artifacts) == 0 {
 		return nil, fmt.Errorf("no images generated")
 	}
-
-	// Create response with image data
-	return &ai.ModelResponse{
-		Message: &ai.Message{
-			Role: ai.RoleModel,
-			Content: []*ai.Part{
-				ai.NewMediaPart("image/png", "data:image/png;base64,"+result.Artifacts[0].Base64),
-			},
-		},
-		FinishReason: ai.FinishReasonStop,
-	}, nil
+	images := make([]string, 0, len(result.Artifacts))
+	for _, artifact := range result.Artifacts {
+		if artifact.Base64 != "" {
+			images = append(images, artifact.Base64)
+		}
+	}
+	if len(images) == 0 {
+		return nil, fmt.Errorf("no images generated")
+	}
+	return images, nil
 }
 
-func (b *Bedrock) generateNovaCanvasImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) (*ai.ModelResponse, error) {
+func (b *Bedrock) generateModernStabilityImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
+	requestBody := map[string]interface{}{
+		"prompt":        prompt,
+		"output_format": "png",
+	}
+
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	input := &bedrockruntime.InvokeModelInput{
+		ModelId:     aws.String(modelName),
+		Body:        body,
+		ContentType: aws.String("application/json"),
+		Accept:      aws.String("application/json"),
+	}
+
+	ctx, cancel := b.withRequestTimeout(ctx)
+	defer cancel()
+
+	response, err := b.client.InvokeModel(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to invoke model: %w", err)
+	}
+
+	var result struct {
+		Images        []string  `json:"images"`
+		FinishReasons []*string `json:"finish_reasons"`
+	}
+
+	if err := json.Unmarshal(response.Body, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	for _, reason := range result.FinishReasons {
+		if reason != nil && *reason != "" && *reason != "SUCCESS" {
+			return nil, fmt.Errorf("image generation finished with reason: %s", *reason)
+		}
+	}
+	if len(result.Images) == 0 {
+		return nil, fmt.Errorf("no images generated")
+	}
+	return result.Images, nil
+}
+
+func (b *Bedrock) generateNovaCanvasImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
 	// Prepare request body for Nova Canvas
 	requestBody := map[string]interface{}{
 		"taskType": "TEXT_IMAGE",
@@ -277,15 +363,5 @@ func (b *Bedrock) generateNovaCanvasImage(ctx context.Context, modelName, prompt
 	if len(result.Images) == 0 {
 		return nil, fmt.Errorf("no images generated")
 	}
-
-	// Create response with image data
-	return &ai.ModelResponse{
-		Message: &ai.Message{
-			Role: ai.RoleModel,
-			Content: []*ai.Part{
-				ai.NewMediaPart("image/png", "data:image/png;base64,"+result.Images[0]),
-			},
-		},
-		FinishReason: ai.FinishReasonStop,
-	}, nil
+	return result.Images, nil
 }
