@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -476,8 +477,9 @@ func assertPanicsContains(t *testing.T, want string, fn func()) {
 
 func isolateAWSConfig(t *testing.T) {
 	t.Helper()
-	configPath := t.TempDir() + "/config"
-	credentialsPath := t.TempDir() + "/credentials"
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config")
+	credentialsPath := filepath.Join(tmpDir, "credentials")
 	if err := os.WriteFile(configPath, []byte("[default]\n"), 0600); err != nil {
 		t.Fatalf("failed to write test AWS config: %v", err)
 	}
