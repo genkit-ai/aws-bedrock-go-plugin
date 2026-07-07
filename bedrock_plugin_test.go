@@ -20,8 +20,13 @@ package bedrock
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -265,6 +270,74 @@ func TestDefineModelRequiresInitializedPluginInstance(t *testing.T) {
 	})
 }
 
+func TestInitUsesExplicitRegionAndDefaults(t *testing.T) {
+	isolateAWSConfig(t)
+
+	b := &Bedrock{Region: "us-west-2"}
+	actions := b.Init(context.Background())
+
+	if len(actions) != 0 {
+		t.Fatalf("Init returned %d actions, want 0", len(actions))
+	}
+	if b.Region != "us-west-2" {
+		t.Fatalf("Region = %q, want %q", b.Region, "us-west-2")
+	}
+	if b.MaxRetries != 3 {
+		t.Fatalf("MaxRetries = %d, want 3", b.MaxRetries)
+	}
+	if b.RequestTimeout != 30*time.Second {
+		t.Fatalf("RequestTimeout = %s, want 30s", b.RequestTimeout)
+	}
+	if !b.initted {
+		t.Fatal("plugin was not marked initialized")
+	}
+	if b.client == nil {
+		t.Fatal("client is nil")
+	}
+}
+
+func TestInitUsesSDKRegionChain(t *testing.T) {
+	isolateAWSConfig(t)
+	t.Setenv("AWS_REGION", "eu-west-1")
+
+	b := &Bedrock{}
+	b.Init(context.Background())
+
+	if b.Region != "" {
+		t.Fatalf("Region = %q, want empty field when resolved by SDK chain", b.Region)
+	}
+	if !b.initted {
+		t.Fatal("plugin was not marked initialized")
+	}
+	if b.client == nil {
+		t.Fatal("client is nil")
+	}
+}
+
+func TestInitPanicsWhenNoRegionResolved(t *testing.T) {
+	isolateAWSConfig(t)
+
+	assertPanicsContains(t, "no AWS region resolved", func() {
+		(&Bedrock{}).Init(context.Background())
+	})
+}
+
+func TestInitPanicsWhenAWSConfigHasNoRegion(t *testing.T) {
+	b := &Bedrock{
+		AWSConfig: &aws.Config{
+			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(
+				"test-access-key",
+				"test-secret-key",
+				"",
+			)),
+		},
+	}
+
+	assertPanicsContains(t, "no AWS region resolved", func() {
+		b.Init(context.Background())
+	})
+}
+
 func TestDefineModelRegistersInferredCapabilityMetadata(t *testing.T) {
 	ctx := context.Background()
 	b := testInitializedBedrock()
@@ -386,6 +459,43 @@ func assertPanicsWith(t *testing.T, want string, fn func()) {
 		}
 	}()
 	fn()
+}
+
+func assertPanicsContains(t *testing.T, want string, fn func()) {
+	t.Helper()
+	defer func() {
+		got := recover()
+		if got == nil {
+			t.Fatalf("expected panic containing %q, got none", want)
+		}
+		if !strings.Contains(fmt.Sprint(got), want) {
+			t.Fatalf("panic = %v, want substring %q", got, want)
+		}
+	}()
+	fn()
+}
+
+func isolateAWSConfig(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config")
+	credentialsPath := filepath.Join(tmpDir, "credentials")
+	if err := os.WriteFile(configPath, []byte("[default]\n"), 0600); err != nil {
+		t.Fatalf("failed to write test AWS config: %v", err)
+	}
+	if err := os.WriteFile(credentialsPath, []byte("[default]\naws_access_key_id = test-access-key\naws_secret_access_key = test-secret-key\n"), 0600); err != nil {
+		t.Fatalf("failed to write test AWS credentials: %v", err)
+	}
+
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	t.Setenv("AWS_PROFILE", "default")
+	t.Setenv("AWS_CONFIG_FILE", configPath)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", credentialsPath)
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 }
 
 func TestModelCapabilities_KnownModels(t *testing.T) {

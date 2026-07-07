@@ -111,7 +111,7 @@ func main() {
 
     // Initialize Bedrock plugin
     bedrockPlugin := &bedrock.Bedrock{
-        Region: "us-east-1", // Optional, defaults to AWS_REGION or us-east-1
+        Region: "us-east-1", // Optional override; otherwise resolved by the AWS SDK
     }
     
     // Initialize Genkit
@@ -182,7 +182,7 @@ The plugin supports various configuration options:
 
 ```go
 bedrockPlugin := &bedrock.Bedrock{
-    Region:         "us-west-2",           // AWS region
+    Region:         "us-west-2",           // Optional AWS region override
     MaxRetries:     3,                     // Max retry attempts
     RequestTimeout: 30 * time.Second,     // Request timeout
     AWSConfig:      customAWSConfig,      // Custom AWS config (optional)
@@ -193,7 +193,7 @@ bedrockPlugin := &bedrock.Bedrock{
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `Region` | `string` | `"us-east-1"` | AWS region for Bedrock |
+| `Region` | `string` | AWS SDK region chain | Optional AWS region override. If empty, the AWS SDK resolves `AWS_REGION`, `AWS_DEFAULT_REGION`, shared config, or instance metadata. |
 | `MaxRetries` | `int` | `3` | Maximum retry attempts |
 | `RequestTimeout` | `time.Duration` | `30s` | Request timeout |
 | `AWSConfig` | `*aws.Config` | `nil` | Custom AWS configuration |
@@ -213,7 +213,9 @@ Pass `bedrock.Config` with `ai.WithConfig` for Converse model calls.
 
 ## AWS Setup and Authentication
 
-The plugin uses the standard AWS SDK v2 configuration methods:
+The plugin uses the standard AWS SDK v2 configuration methods. Set `Bedrock.Region`
+for an explicit region, or leave it empty and configure a region through the AWS SDK
+region chain. If no region is resolved, initialization fails with a clear error.
 
 ### Authentication Methods
 1. **Environment Variables**:
@@ -223,12 +225,16 @@ The plugin uses the standard AWS SDK v2 configuration methods:
    export AWS_REGION="us-east-1"
    ```
 
-2. **AWS Credentials File** (`~/.aws/credentials`):
+2. **AWS Config and Credentials Files** (`~/.aws/config` and `~/.aws/credentials`):
    ```ini
+   # ~/.aws/config
+   [default]
+   region = us-east-1
+
+   # ~/.aws/credentials
    [default]
    aws_access_key_id = your-access-key
    aws_secret_access_key = your-secret-key
-   region = us-east-1
    ```
 
 3. **IAM Roles** (when running on AWS services like EC2, ECS, Lambda)

@@ -41,7 +41,7 @@ import (
 
 // Bedrock provides configuration options for the AWS Bedrock plugin.
 type Bedrock struct {
-	Region         string        // AWS region (optional, uses AWS_REGION or us-east-1)
+	Region         string        // AWS region override (optional; otherwise resolved by the AWS SDK)
 	MaxRetries     int           // Maximum number of retries (default: 3)
 	RequestTimeout time.Duration // Request timeout (default: 30s)
 	AWSConfig      *aws.Config   // Custom AWS config (optional)
@@ -67,9 +67,6 @@ func (b *Bedrock) Init(ctx context.Context) []api.Action {
 	}
 
 	// Set defaults
-	if b.Region == "" {
-		b.Region = "us-east-1" // Default region
-	}
 	if b.MaxRetries == 0 {
 		b.MaxRetries = 3
 	}
@@ -84,14 +81,22 @@ func (b *Bedrock) Init(ctx context.Context) []api.Action {
 	if b.AWSConfig != nil {
 		awsConfig = *b.AWSConfig
 	} else {
-		// Load default AWS configuration
-		awsConfig, err = config.LoadDefaultConfig(ctx,
-			config.WithRegion(b.Region),
+		loadOptions := []func(*config.LoadOptions) error{
 			config.WithRetryMaxAttempts(b.MaxRetries),
-		)
+		}
+		if b.Region != "" {
+			loadOptions = append(loadOptions, config.WithRegion(b.Region))
+		}
+
+		// Load default AWS configuration
+		awsConfig, err = config.LoadDefaultConfig(ctx, loadOptions...)
 		if err != nil {
 			panic(fmt.Sprintf("bedrock: failed to load AWS config: %v", err))
 		}
+	}
+
+	if awsConfig.Region == "" {
+		panic("bedrock: no AWS region resolved; set Bedrock.Region, AWS_REGION, AWS_DEFAULT_REGION, or a region in ~/.aws/config")
 	}
 
 	// Create Bedrock Runtime client
