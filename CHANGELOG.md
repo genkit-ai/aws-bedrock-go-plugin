@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.1](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.22.0...v1.22.1) (2026-07-07)
+
+### 🐛 Bug Fixes
+
+* **bedrock:** resolve AWS region via SDK config chain ([#162](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/162)) ([2789648](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/2789648eba1f9927e7b0c98a62a93de80eb7d1ea))
+
 ## [1.22.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.21.0...v1.22.0) (2026-07-07)
 
 ### 🚀 Features
