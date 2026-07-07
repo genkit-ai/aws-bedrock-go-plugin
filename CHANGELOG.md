@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.21.0...v1.22.0) (2026-07-07)
+
+### 🚀 Features
+
+* **image:** image generation across more families ([#161](https://github.com/genkit-ai/aws-bedrock-go-plugin/issues/161)) ([bfe8ee1](https://github.com/genkit-ai/aws-bedrock-go-plugin/commit/bfe8ee103427f3e5813f9e4e286047e769b168e2))
+
 ## [1.21.0](https://github.com/genkit-ai/aws-bedrock-go-plugin/compare/v1.20.1...v1.21.0) (2026-07-06)
 
 ### 🚀 Features
