@@ -391,3 +391,7 @@ docs(readme): refresh live test commands
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
+
+---
+
+**Built with ❤️ for the Genkit Go community**
