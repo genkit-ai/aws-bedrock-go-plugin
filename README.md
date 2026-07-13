@@ -173,7 +173,7 @@ go run main.go
 From the repository root, run the optional live reranking test with:
 
 ```bash
-go test . -run TestBedrockLive_CohereRerank -test-bedrock-rerank-model=cohere.rerank-v3-5:0
+go test . -run TestBedrockLive_CohereRerank -test-bedrock-region=us-east-1 -test-bedrock-rerank-model=cohere.rerank-v3-5:0
 ```
 
 ## Configuration Options

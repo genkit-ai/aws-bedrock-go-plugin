@@ -28,18 +28,20 @@ import (
 )
 
 var (
-	testBedrockRerankRegion = flag.String("test-bedrock-rerank-region", "us-east-1", "AWS region for live Bedrock rerank tests")
-	testBedrockRerankModel  = flag.String("test-bedrock-rerank-model", "", "Bedrock rerank model ID for live tests, for example cohere.rerank-v3-5:0")
+	testBedrockRerankModel = flag.String("test-bedrock-rerank-model", "", "Bedrock rerank model ID for live tests, for example cohere.rerank-v3-5:0")
 )
 
 func TestBedrockLive_CohereRerank(t *testing.T) {
+	if *testRegion == "" {
+		t.Skip("bedrock live tests skipped; pass -test-bedrock-region=<region>")
+	}
 	if *testBedrockRerankModel == "" {
 		t.Skip("set -test-bedrock-rerank-model to run live Bedrock rerank test")
 	}
 
 	ctx := context.Background()
 	bedrockPlugin := &Bedrock{
-		Region: *testBedrockRerankRegion,
+		Region: *testRegion,
 	}
 	g := genkit.Init(ctx,
 		genkit.WithPlugins(bedrockPlugin),

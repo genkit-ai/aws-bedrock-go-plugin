@@ -270,6 +270,118 @@ func TestDefineModelRequiresInitializedPluginInstance(t *testing.T) {
 	})
 }
 
+func TestBedrockName(t *testing.T) {
+	if got := (&Bedrock{}).Name(); got != provider {
+		t.Fatalf("Name() = %q, want %q", got, provider)
+	}
+}
+
+func TestDefineEmbedderRequiresInitializedPluginInstance(t *testing.T) {
+	ctx := context.Background()
+	b := testInitializedBedrock()
+	g := genkit.Init(ctx, genkit.WithPlugins(b))
+
+	if got := b.DefineEmbedder(g, "amazon.titan-embed-text-v1"); got == nil {
+		t.Fatal("DefineEmbedder returned nil for initialized plugin")
+	}
+
+	assertPanicsWith(t, "bedrock: Init not called", func() {
+		(&Bedrock{}).DefineEmbedder(g, "amazon.titan-embed-text-v1")
+	})
+}
+
+func TestModelLookupHelpers(t *testing.T) {
+	ctx := context.Background()
+	b := testInitializedBedrock()
+	g := genkit.Init(ctx, genkit.WithPlugins(b))
+	modelName := "anthropic.claude-3-haiku-20240307-v1:0"
+
+	if IsDefinedModel(g, modelName) {
+		t.Fatal("IsDefinedModel returned true before model registration")
+	}
+	if got := Model(g, modelName); got != nil {
+		t.Fatalf("Model returned %T before model registration, want nil", got)
+	}
+
+	defined := b.DefineModel(g, ModelDefinition{Name: modelName, Type: "chat"}, nil)
+	if defined == nil {
+		t.Fatal("DefineModel returned nil")
+	}
+	if !IsDefinedModel(g, modelName) {
+		t.Fatal("IsDefinedModel returned false after model registration")
+	}
+	if got := Model(g, modelName); got == nil {
+		t.Fatal("Model returned nil after model registration")
+	}
+}
+
+func TestDefineCommonModelsRegistersExpectedAliases(t *testing.T) {
+	ctx := context.Background()
+	b := testInitializedBedrock()
+	g := genkit.Init(ctx, genkit.WithPlugins(b))
+
+	models := DefineCommonModels(b, g)
+	expectedAliases := []string{
+		"claude-haiku",
+		"claude-sonnet",
+		"claude-opus-4",
+		"claude-sonnet-4",
+		"claude-3-7-sonnet",
+		"nova-micro",
+		"nova-lite",
+		"nova-pro",
+		"titan-text",
+		"llama3-8b",
+		"llama3-1-8b",
+		"llama3-2-3b",
+		"llama4-maverick",
+		"llama4-scout",
+		"deepseek-r1",
+		"titan-image",
+		"nova-canvas",
+	}
+
+	if len(models) != len(expectedAliases) {
+		t.Fatalf("DefineCommonModels returned %d models, want %d", len(models), len(expectedAliases))
+	}
+	for _, alias := range expectedAliases {
+		if models[alias] == nil {
+			t.Fatalf("models[%q] is nil or missing", alias)
+		}
+	}
+	if !IsDefinedModel(g, "anthropic.claude-3-haiku-20240307-v1:0") {
+		t.Fatal("claude haiku model was not registered")
+	}
+	if !IsDefinedModel(g, "amazon.nova-canvas-v1:0") {
+		t.Fatal("nova canvas image model was not registered")
+	}
+}
+
+func TestDefineCommonEmbeddersRegistersExpectedAliases(t *testing.T) {
+	ctx := context.Background()
+	b := testInitializedBedrock()
+	g := genkit.Init(ctx, genkit.WithPlugins(b))
+
+	embedders := DefineCommonEmbedders(b, g)
+	expectedAliases := []string{
+		"titan-embed",
+		"titan-embed-v2",
+		"titan-multimodal",
+		"cohere-embed",
+		"cohere-multilingual",
+		"nova-embed",
+	}
+
+	if len(embedders) != len(expectedAliases) {
+		t.Fatalf("DefineCommonEmbedders returned %d embedders, want %d", len(embedders), len(expectedAliases))
+	}
+	for _, alias := range expectedAliases {
+		if embedders[alias] == nil {
+			t.Fatalf("embedders[%q] is nil or missing", alias)
+		}
+	}
+}
+
 func TestInitUsesExplicitRegionAndDefaults(t *testing.T) {
 	isolateAWSConfig(t)
 
