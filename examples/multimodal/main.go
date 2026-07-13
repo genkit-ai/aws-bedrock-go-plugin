@@ -28,11 +28,23 @@ import (
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
 
+const defaultVisionModel = "amazon.nova-lite-v1:0"
+
+func exampleVisionModelID() string {
+	if modelID := os.Getenv("BEDROCK_VISION_MODEL"); modelID != "" {
+		return modelID
+	}
+	if modelID := os.Getenv("BEDROCK_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultVisionModel
+}
+
 func main() {
 	ctx := context.Background()
 
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	// Initialize Genkit
@@ -42,11 +54,15 @@ func main() {
 
 	log.Println("Starting multimodal conversation example...")
 
-	// Define Claude 3 model (supports multimodal)
-	claudeModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
-		Name: "anthropic.claude-3-sonnet-20240229-v1:0",
+	// Define a model that supports image inputs. Set BEDROCK_VISION_MODEL or
+	// BEDROCK_MODEL to use a regional/global inference profile or another model
+	// your account can access.
+	modelID := exampleVisionModelID()
+	visionModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
+		Name: modelID,
 		Type: "chat",
 	}, nil)
+	log.Printf("Using model: %s", modelID)
 
 	// Example conversation with both text and image
 	// Read the cat.jpeg file
@@ -59,11 +75,12 @@ func main() {
 	imageData := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(imageBytes)
 
 	response, err := genkit.Generate(ctx, g,
-		ai.WithModel(claudeModel),
+		ai.WithModel(visionModel),
 		ai.WithMessages(ai.NewUserMessage(
 			ai.NewTextPart("What do you see in this image? Please describe it in detail."),
 			ai.NewMediaPart("image/jpeg", imageData),
 		)),
+		ai.WithConfig(&bedrock.Config{MaxTokens: 512}),
 	)
 
 	if err != nil {

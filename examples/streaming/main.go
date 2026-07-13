@@ -21,16 +21,26 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
 
+const defaultStreamingModel = "amazon.nova-lite-v1:0"
+
+func exampleModelID() string {
+	if modelID := os.Getenv("BEDROCK_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultStreamingModel
+}
+
 func main() {
 	ctx := context.Background()
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	// Initialize Genkit
@@ -42,11 +52,14 @@ func main() {
 
 	log.Println("Starting streaming text generation example...")
 
-	// Define Claude 3 Sonnet model
-	claudeModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
-		Name: "anthropic.claude-3-sonnet-20240229-v1:0",
+	// Define a chat model. Set BEDROCK_MODEL to use a regional/global
+	// inference profile or another model your account can access.
+	modelID := exampleModelID()
+	chatModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
+		Name: modelID,
 		Type: "chat",
 	}, nil)
+	log.Printf("Using model: %s", modelID)
 
 	// Streaming callback to handle response chunks
 	streamCallback := func(ctx context.Context, chunk *ai.ModelResponseChunk) error {
@@ -64,8 +77,9 @@ func main() {
 
 	// Generate streaming response
 	response, err := genkit.Generate(ctx, g,
-		ai.WithModel(claudeModel),
+		ai.WithModel(chatModel),
 		ai.WithPrompt("Write a short story about a robot learning to paint. Make it creative and engaging."),
+		ai.WithConfig(&bedrock.Config{MaxTokens: 1000}),
 		ai.WithStreaming(streamCallback),
 	)
 

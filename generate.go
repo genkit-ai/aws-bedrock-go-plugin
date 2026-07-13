@@ -498,7 +498,7 @@ func configFromRequest(input *ai.ModelRequest) (*Config, error) {
 		return configFromGenerationCommonConfig(v), nil
 	case ai.GenerationCommonConfig:
 		return configFromGenerationCommonConfig(&v), nil
-	case map[string]interface{}:
+	case map[string]any:
 		b, err := json.Marshal(v)
 		if err != nil {
 			return nil, fmt.Errorf("bedrock: marshal config: %w", err)
@@ -525,7 +525,7 @@ func configFromRequest(input *ai.ModelRequest) (*Config, error) {
 
 // mapInt reads an integer-valued key from a config map, tolerating the float64
 // that JSON-decoded numbers arrive as alongside a plain int.
-func mapInt(m map[string]interface{}, key string) (int, bool) {
+func mapInt(m map[string]any, key string) (int, bool) {
 	switch v := m[key].(type) {
 	case int:
 		return v, true
@@ -693,7 +693,7 @@ func reasoningBlockToPart(block types.ReasoningContentBlock) (*ai.Part, error) {
 }
 
 // convertToolInputTypes converts tool input parameters to the correct types based on the tool schema
-func (b *Bedrock) convertToolInputTypes(inputMap map[string]interface{}, toolName string, tools []*ai.ToolDefinition) interface{} {
+func (b *Bedrock) convertToolInputTypes(inputMap map[string]any, toolName string, tools []*ai.ToolDefinition) any {
 	// Find the tool definition for this tool call
 	var targetTool *ai.ToolDefinition
 	for _, tool := range tools {
@@ -713,12 +713,12 @@ func (b *Bedrock) convertToolInputTypes(inputMap map[string]interface{}, toolNam
 }
 
 // convertMapWithSchema recursively converts a map's values to match the expected schema types
-func (b *Bedrock) convertMapWithSchema(inputMap map[string]interface{}, schema map[string]any) interface{} {
+func (b *Bedrock) convertMapWithSchema(inputMap map[string]any, schema map[string]any) any {
 	if schema == nil {
 		return inputMap
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 
 	// Handle object schema with properties
 	if schemaType, ok := schema["type"].(string); ok && schemaType == "object" {
@@ -743,7 +743,7 @@ func (b *Bedrock) convertMapWithSchema(inputMap map[string]interface{}, schema m
 }
 
 // convertValueWithSchema converts a single value to match the expected schema type
-func (b *Bedrock) convertValueWithSchema(value interface{}, schema map[string]any) interface{} {
+func (b *Bedrock) convertValueWithSchema(value any, schema map[string]any) any {
 	if schema == nil {
 		return value
 	}
@@ -837,8 +837,8 @@ func (b *Bedrock) convertValueWithSchema(value interface{}, schema map[string]an
 	// Handle arrays
 	if schemaType == "array" {
 		if items, ok := schema["items"].(map[string]any); ok {
-			if arrayValue, ok := value.([]interface{}); ok {
-				result := make([]interface{}, len(arrayValue))
+			if arrayValue, ok := value.([]any); ok {
+				result := make([]any, len(arrayValue))
 				for i, item := range arrayValue {
 					result[i] = b.convertValueWithSchema(item, items)
 				}
@@ -849,7 +849,7 @@ func (b *Bedrock) convertValueWithSchema(value interface{}, schema map[string]an
 
 	// Handle objects
 	if schemaType == "object" {
-		if mapValue, ok := value.(map[string]interface{}); ok {
+		if mapValue, ok := value.(map[string]any); ok {
 			return b.convertMapWithSchema(mapValue, schema)
 		}
 	}
@@ -864,7 +864,7 @@ func (b *Bedrock) convertJSONSchemaToBedrockSchema(schema any) (*types.ToolInput
 		return nil, fmt.Errorf("schema is nil")
 	}
 
-	// Convert schema to a map[string]interface{} format
+	// Convert schema to a map[string]any format
 	schemaMap, err := b.normalizeSchema(schema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize schema: %w", err)
@@ -886,22 +886,22 @@ func (b *Bedrock) convertJSONSchemaToBedrockSchema(schema any) (*types.ToolInput
 	return &bedrockSchema, nil
 }
 
-// normalizeSchema converts various schema formats to a standard map[string]interface{}
-func (b *Bedrock) normalizeSchema(schema any) (map[string]interface{}, error) {
+// normalizeSchema converts various schema formats to a standard map[string]any
+func (b *Bedrock) normalizeSchema(schema any) (map[string]any, error) {
 	switch s := schema.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		// Already in the correct format - validate it's a proper JSON Schema
 		return b.validateAndNormalizeJSONSchema(s), nil
 	case string:
 		// Try to parse JSON string
-		var schemaMap map[string]interface{}
+		var schemaMap map[string]any
 		if err := json.Unmarshal([]byte(s), &schemaMap); err != nil {
 			return nil, fmt.Errorf("failed to parse schema JSON: %w", err)
 		}
 		return b.validateAndNormalizeJSONSchema(schemaMap), nil
 	case []byte:
 		// Try to parse JSON bytes
-		var schemaMap map[string]interface{}
+		var schemaMap map[string]any
 		if err := json.Unmarshal(s, &schemaMap); err != nil {
 			return nil, fmt.Errorf("failed to parse schema JSON bytes: %w", err)
 		}
@@ -912,7 +912,7 @@ func (b *Bedrock) normalizeSchema(schema any) (map[string]interface{}, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal schema: %w", err)
 		}
-		var schemaMap map[string]interface{}
+		var schemaMap map[string]any
 		if err := json.Unmarshal(jsonData, &schemaMap); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal schema: %w", err)
 		}
@@ -921,9 +921,9 @@ func (b *Bedrock) normalizeSchema(schema any) (map[string]interface{}, error) {
 }
 
 // validateAndNormalizeJSONSchema ensures the schema is a valid JSON Schema and adds required fields
-func (b *Bedrock) validateAndNormalizeJSONSchema(schema map[string]interface{}) map[string]interface{} {
+func (b *Bedrock) validateAndNormalizeJSONSchema(schema map[string]any) map[string]any {
 	// Make a copy to avoid modifying the original
-	normalized := make(map[string]interface{})
+	normalized := make(map[string]any)
 	for k, v := range schema {
 		normalized[k] = v
 	}
@@ -936,7 +936,7 @@ func (b *Bedrock) validateAndNormalizeJSONSchema(schema map[string]interface{}) 
 	// Ensure we have a properties field for object types
 	if normalized["type"] == "object" {
 		if _, exists := normalized["properties"]; !exists {
-			normalized["properties"] = map[string]interface{}{}
+			normalized["properties"] = map[string]any{}
 		}
 	}
 
@@ -951,8 +951,8 @@ func (b *Bedrock) validateAndNormalizeJSONSchema(schema map[string]interface{}) 
 // Helper functions for creating JSON Schema patterns
 
 // NewObjectSchema creates a JSON Schema for an object with the specified properties
-func NewObjectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
-	schema := map[string]interface{}{
+func NewObjectSchema(properties map[string]any, required []string) map[string]any {
+	schema := map[string]any{
 		"type":       "object",
 		"properties": properties,
 	}
@@ -965,8 +965,8 @@ func NewObjectSchema(properties map[string]interface{}, required []string) map[s
 }
 
 // NewStringSchema creates a JSON Schema for a string with optional constraints
-func NewStringSchema(description string, enum []string) map[string]interface{} {
-	schema := map[string]interface{}{
+func NewStringSchema(description string, enum []string) map[string]any {
+	schema := map[string]any{
 		"type": "string",
 	}
 
@@ -982,8 +982,8 @@ func NewStringSchema(description string, enum []string) map[string]interface{} {
 }
 
 // NewNumberSchema creates a JSON Schema for a number with optional constraints
-func NewNumberSchema(description string, minimum, maximum *float64) map[string]interface{} {
-	schema := map[string]interface{}{
+func NewNumberSchema(description string, minimum, maximum *float64) map[string]any {
+	schema := map[string]any{
 		"type": "number",
 	}
 
@@ -1003,8 +1003,8 @@ func NewNumberSchema(description string, minimum, maximum *float64) map[string]i
 }
 
 // NewArraySchema creates a JSON Schema for an array with the specified item type
-func NewArraySchema(itemSchema map[string]interface{}, description string) map[string]interface{} {
-	schema := map[string]interface{}{
+func NewArraySchema(itemSchema map[string]any, description string) map[string]any {
+	schema := map[string]any{
 		"type":  "array",
 		"items": itemSchema,
 	}

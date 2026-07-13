@@ -21,17 +21,27 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
 
+const defaultRerankModel = "cohere.rerank-v3-5:0"
+
+func exampleRerankModelID() string {
+	if modelID := os.Getenv("BEDROCK_RERANK_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultRerankModel
+}
+
 func main() {
 	ctx := context.Background()
 
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	g := genkit.Init(ctx,
@@ -40,7 +50,10 @@ func main() {
 
 	log.Println("Starting reranking example...")
 
-	response, err := bedrock.Rerank(ctx, g, "cohere.rerank-v3-5:0", &ai.RerankerRequest{
+	modelID := exampleRerankModelID()
+	log.Printf("Using model: %s", modelID)
+
+	response, err := bedrock.Rerank(ctx, g, modelID, &ai.RerankerRequest{
 		Query: ai.DocumentFromText("How do I configure authentication for AWS Bedrock?", nil),
 		Documents: []*ai.Document{
 			ai.DocumentFromText("Configure AWS credentials with environment variables, shared credentials files, IAM roles, or AWS SSO.", map[string]any{"id": "auth"}),

@@ -35,6 +35,18 @@ import (
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
 
+const defaultDocumentModel = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+
+func exampleDocumentModelID() string {
+	if modelID := os.Getenv("BEDROCK_DOCUMENT_MODEL"); modelID != "" {
+		return modelID
+	}
+	if modelID := os.Getenv("BEDROCK_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultDocumentModel
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -50,20 +62,22 @@ func main() {
 	}
 
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	g := genkit.Init(ctx,
 		genkit.WithPlugins(bedrockPlugin),
 	)
 
-	// Claude 3.7 Sonnet supports document inputs. For newer models (Haiku 4.5,
-	// Sonnet 4, etc.) use their cross-region inference profile IDs, e.g.:
-	//   "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-	claudeModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
-		Name: "anthropic.claude-3-7-sonnet-20250219-v1:0",
+	// Define a model that supports document inputs. Set BEDROCK_DOCUMENT_MODEL
+	// or BEDROCK_MODEL to use a regional/global inference profile or another
+	// document-capable model your account can access.
+	modelID := exampleDocumentModelID()
+	documentModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
+		Name: modelID,
 		Type: "chat",
 	}, nil)
+	log.Printf("Using model: %s", modelID)
 
 	// Pass the PDF as a data URI with MIME type application/pdf.
 	// The plugin sends this as a DocumentBlock, which is required by Bedrock
@@ -73,11 +87,12 @@ func main() {
 	log.Printf("Sending %q to Bedrock for analysis...", pdfPath)
 
 	response, err := genkit.Generate(ctx, g,
-		ai.WithModel(claudeModel),
+		ai.WithModel(documentModel),
 		ai.WithMessages(ai.NewUserMessage(
 			ai.NewMediaPart("application/pdf", pdfDataURL),
 			ai.NewTextPart("Summarize this document in a few sentences."),
 		)),
+		ai.WithConfig(&bedrock.Config{MaxTokens: 512}),
 	)
 	if err != nil {
 		log.Fatalf("Error: %v", err)

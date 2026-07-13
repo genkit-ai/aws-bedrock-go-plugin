@@ -113,12 +113,12 @@ func imageResponse(input *ai.ModelRequest, images []string) (*ai.ModelResponse, 
 // generateTitanImage generates images using Amazon Titan Image Generator
 func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
 	// Prepare request body for Titan Image Generator
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"taskType": "TEXT_IMAGE",
-		"textToImageParams": map[string]interface{}{
+		"textToImageParams": map[string]any{
 			"text": prompt,
 		},
-		"imageGenerationConfig": map[string]interface{}{
+		"imageGenerationConfig": map[string]any{
 			"numberOfImages": 1,
 			"height":         1024,
 			"width":          1024,
@@ -129,11 +129,11 @@ func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt stri
 
 	// Apply config if provided
 	if config != nil {
-		if configMap, ok := config.(map[string]interface{}); ok {
+		if configMap, ok := config.(map[string]any); ok {
 			if imageConfig, exists := configMap["imageGenerationConfig"]; exists {
-				if imgCfg, ok := imageConfig.(map[string]interface{}); ok {
+				if imgCfg, ok := imageConfig.(map[string]any); ok {
 					for k, v := range imgCfg {
-						requestBody["imageGenerationConfig"].(map[string]interface{})[k] = v
+						requestBody["imageGenerationConfig"].(map[string]any)[k] = v
 					}
 				}
 			}
@@ -180,8 +180,8 @@ func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt stri
 // generateStableDiffusionImage generates images using Stability AI Stable Diffusion
 func (b *Bedrock) generateStableDiffusionImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
 	// Prepare request body for Stable Diffusion
-	requestBody := map[string]interface{}{
-		"text_prompts": []map[string]interface{}{
+	requestBody := map[string]any{
+		"text_prompts": []map[string]any{
 			{
 				"text":   prompt,
 				"weight": 1.0,
@@ -197,7 +197,7 @@ func (b *Bedrock) generateStableDiffusionImage(ctx context.Context, modelName, p
 
 	// Apply config if provided
 	if config != nil {
-		if configMap, ok := config.(map[string]interface{}); ok {
+		if configMap, ok := config.(map[string]any); ok {
 			for k, v := range configMap {
 				requestBody[k] = v
 			}
@@ -254,7 +254,7 @@ func (b *Bedrock) generateStableDiffusionImage(ctx context.Context, modelName, p
 }
 
 func (b *Bedrock) generateModernStabilityImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"prompt":        prompt,
 		"output_format": "png",
 	}
@@ -301,12 +301,12 @@ func (b *Bedrock) generateModernStabilityImage(ctx context.Context, modelName, p
 
 func (b *Bedrock) generateNovaCanvasImage(ctx context.Context, modelName, prompt string, config any, cb func(context.Context, *ai.ModelResponseChunk) error) ([]string, error) {
 	// Prepare request body for Nova Canvas
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"taskType": "TEXT_IMAGE",
-		"textToImageParams": map[string]interface{}{
+		"textToImageParams": map[string]any{
 			"text": prompt,
 		},
-		"imageGenerationConfig": map[string]interface{}{
+		"imageGenerationConfig": map[string]any{
 			"numberOfImages": 1,
 			"quality":        "standard",
 			"height":         1024,
@@ -318,11 +318,11 @@ func (b *Bedrock) generateNovaCanvasImage(ctx context.Context, modelName, prompt
 
 	// Apply config if provided
 	if config != nil {
-		if configMap, ok := config.(map[string]interface{}); ok {
+		if configMap, ok := config.(map[string]any); ok {
 			if imageConfig, exists := configMap["imageGenerationConfig"]; exists {
-				if imgCfg, ok := imageConfig.(map[string]interface{}); ok {
+				if imgCfg, ok := imageConfig.(map[string]any); ok {
 					for k, v := range imgCfg {
-						requestBody["imageGenerationConfig"].(map[string]interface{})[k] = v
+						requestBody["imageGenerationConfig"].(map[string]any)[k] = v
 					}
 				}
 			}

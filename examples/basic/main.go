@@ -20,18 +20,29 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
 
+const defaultTextModel = "amazon.nova-lite-v1:0"
+
+func exampleModelID() string {
+	if modelID := os.Getenv("BEDROCK_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultTextModel
+}
+
 func main() {
 	ctx := context.Background()
 
-	// Initialize Bedrock plugin
+	// Initialize Bedrock plugin. Region can be omitted when the AWS SDK region
+	// chain is configured through AWS_REGION, AWS_DEFAULT_REGION, or shared config.
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	// Initialize Genkit
@@ -43,16 +54,20 @@ func main() {
 
 	log.Println("Starting basic Bedrock example...")
 
-	// Define Claude 3 Haiku model
-	claudeModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
-		Name: "anthropic.claude-3-haiku-20240307-v1:0",
+	// Define a chat model. Set BEDROCK_MODEL to use a regional/global
+	// inference profile or another model your account can access.
+	modelID := exampleModelID()
+	chatModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
+		Name: modelID,
 		Type: "chat",
 	}, nil)
+	log.Printf("Using model: %s", modelID)
 
 	// Example: Generate text (basic usage)
 	response, err := genkit.Generate(ctx, g,
-		ai.WithModel(claudeModel),
+		ai.WithModel(chatModel),
 		ai.WithPrompt("What are the key benefits of using AWS Bedrock for AI applications?"),
+		ai.WithConfig(&bedrock.Config{MaxTokens: 512}),
 	)
 	if err != nil {
 		log.Printf("Error generating text: %v", err)
