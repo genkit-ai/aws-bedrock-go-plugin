@@ -201,6 +201,13 @@ func TestConfigFromRequest_UnsupportedType(t *testing.T) {
 	}
 }
 
+func TestGenerateText_NilRequestWrapsBuildError(t *testing.T) {
+	_, err := (&Bedrock{}).generateText(context.Background(), "anthropic.claude-3-haiku-20240307-v1:0", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "failed to build converse input: model request is nil") {
+		t.Fatalf("generateText(nil) error = %v, want wrapped build error", err)
+	}
+}
+
 // ---- buildConverseInput -----------------------------------------------------
 
 func TestBuildConverseInput_NilRequest(t *testing.T) {
@@ -513,6 +520,52 @@ func TestBuildConverseInput_MultiTurnText(t *testing.T) {
 	}
 	if out.Messages[1].Role != types.ConversationRoleAssistant {
 		t.Errorf("msg[1] role = %v, want assistant", out.Messages[1].Role)
+	}
+}
+
+func TestConvertMessages_UnsupportedRole(t *testing.T) {
+	_, _, err := convertMessages([]*ai.Message{
+		{Role: ai.Role("critic"), Content: []*ai.Part{ai.NewTextPart("nope")}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported role") {
+		t.Fatalf("convertMessages unsupported role error = %v", err)
+	}
+}
+
+func TestPartsToContentBlocks_ToolResponseJSONOutput(t *testing.T) {
+	blocks, err := partsToContentBlocks([]*ai.Part{
+		ai.NewToolResponsePart(&ai.ToolResponse{
+			Ref:    "call-1",
+			Name:   "get_weather",
+			Output: map[string]any{"temp": 21, "unit": "c"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("partsToContentBlocks() error = %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("len(blocks) = %d, want 1", len(blocks))
+	}
+	result, ok := blocks[0].(*types.ContentBlockMemberToolResult)
+	if !ok {
+		t.Fatalf("block = %T, want *ContentBlockMemberToolResult", blocks[0])
+	}
+	if len(result.Value.Content) != 1 {
+		t.Fatalf("tool result content len = %d, want 1", len(result.Value.Content))
+	}
+	text, ok := result.Value.Content[0].(*types.ToolResultContentBlockMemberText)
+	if !ok {
+		t.Fatalf("tool result content = %T, want text", result.Value.Content[0])
+	}
+	if !strings.Contains(text.Value, `"temp":21`) || !strings.Contains(text.Value, `"unit":"c"`) {
+		t.Fatalf("tool response text = %q, want JSON object", text.Value)
+	}
+}
+
+func TestToolResponseText_UnmarshalableOutputErrors(t *testing.T) {
+	_, err := toolResponseText(func() {})
+	if err == nil || !strings.Contains(err.Error(), "marshal tool response") {
+		t.Fatalf("toolResponseText(func) error = %v, want marshal error", err)
 	}
 }
 
@@ -1071,6 +1124,44 @@ func TestNormalizeSchema_InvalidJSON(t *testing.T) {
 	_, err := b.normalizeSchema("not json")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON string")
+	}
+}
+
+func TestNormalizeSchema_StructInput(t *testing.T) {
+	type schemaStruct struct {
+		Type       string         `json:"type"`
+		Properties map[string]any `json:"properties,omitempty"`
+	}
+
+	b := &Bedrock{}
+	result, err := b.normalizeSchema(schemaStruct{
+		Type:       "object",
+		Properties: map[string]any{"city": map[string]any{"type": "string"}},
+	})
+	if err != nil {
+		t.Fatalf("normalizeSchema struct: %v", err)
+	}
+	if result["type"] != "object" {
+		t.Fatalf("type = %v, want object", result["type"])
+	}
+	props, ok := result["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties = %T, want map[string]any", result["properties"])
+	}
+	if props["city"] == nil {
+		t.Fatal("properties[city] missing")
+	}
+}
+
+func TestNormalizeSchema_UnmarshalableInput(t *testing.T) {
+	type badSchema struct {
+		Bad func() `json:"bad"`
+	}
+
+	b := &Bedrock{}
+	_, err := b.normalizeSchema(badSchema{Bad: func() {}})
+	if err == nil || !strings.Contains(err.Error(), "failed to marshal schema") {
+		t.Fatalf("normalizeSchema unmarshalable input error = %v, want marshal error", err)
 	}
 }
 

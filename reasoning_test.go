@@ -202,6 +202,31 @@ func TestConvertResponse_TextSkipsReasoning(t *testing.T) {
 	}
 }
 
+func TestReasoningBlockToPart_EmptyBlocksReturnNil(t *testing.T) {
+	part, err := reasoningBlockToPart(&types.ReasoningContentBlockMemberReasoningText{})
+	if err != nil {
+		t.Fatalf("empty reasoning text error = %v", err)
+	}
+	if part != nil {
+		t.Fatalf("empty reasoning text part = %+v, want nil", part)
+	}
+
+	part, err = reasoningBlockToPart(&types.ReasoningContentBlockMemberRedactedContent{})
+	if err != nil {
+		t.Fatalf("empty redacted reasoning error = %v", err)
+	}
+	if part != nil {
+		t.Fatalf("empty redacted reasoning part = %+v, want nil", part)
+	}
+}
+
+func TestReasoningBlockToPart_UnknownVariantErrors(t *testing.T) {
+	_, err := reasoningBlockToPart(&types.UnknownUnionMember{Tag: "future_reasoning_block"})
+	if err == nil {
+		t.Fatal("expected error for unknown reasoning content variant")
+	}
+}
+
 // --- Streaming --------------------------------------------------------------
 
 func TestAppendReasoningDelta(t *testing.T) {

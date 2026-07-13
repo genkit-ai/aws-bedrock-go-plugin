@@ -219,6 +219,43 @@ func TestConsumeStreamEvents_UnsupportedDeltaErrors(t *testing.T) {
 	}
 }
 
+func TestAppendContentBlockDelta_NilBlockErrors(t *testing.T) {
+	err := appendContentBlockDelta(context.Background(), nil, &types.ContentBlockDeltaMemberText{Value: "hello"}, nil)
+	if !errors.Is(err, errStreamBlockRequired) {
+		t.Fatalf("error = %v, want errStreamBlockRequired", err)
+	}
+}
+
+func TestAppendReasoningDelta_NilBlockErrors(t *testing.T) {
+	_, err := appendReasoningDelta(nil, &types.ReasoningContentBlockDeltaMemberText{Value: "thinking"})
+	if !errors.Is(err, errStreamBlockRequired) {
+		t.Fatalf("error = %v, want errStreamBlockRequired", err)
+	}
+}
+
+func TestEmitToolBlockStopNoopCases(t *testing.T) {
+	ctx := context.Background()
+	b := &Bedrock{}
+	called := false
+	cb := func(context.Context, *ai.ModelResponseChunk) error {
+		called = true
+		return nil
+	}
+
+	if err := b.emitToolBlockStop(ctx, 0, nil, nil, cb); err != nil {
+		t.Fatalf("nil block error = %v", err)
+	}
+	if err := b.emitToolBlockStop(ctx, 0, &streamBlock{}, nil, cb); err != nil {
+		t.Fatalf("non-tool block error = %v", err)
+	}
+	if err := b.emitToolBlockStop(ctx, 0, &streamBlock{isTool: true}, nil, nil); err != nil {
+		t.Fatalf("nil callback error = %v", err)
+	}
+	if called {
+		t.Fatal("callback was called for no-op tool block stop cases")
+	}
+}
+
 func TestConsumeStreamEvents_EmptyContentReturnsPlaceholder(t *testing.T) {
 	resp, err := (&Bedrock{}).consumeStreamEvents(context.Background(), streamEvents(), nil, nil)
 	if err != nil {
@@ -236,6 +273,23 @@ func TestDecodeToolInput_EmptyAndMalformed(t *testing.T) {
 	}
 	if _, err := decodeToolInput("{not valid"); err == nil {
 		t.Fatal("expected malformed JSON error")
+	}
+}
+
+func TestDecodeToolInput_TrailingJSONErrors(t *testing.T) {
+	_, err := decodeToolInput(`{"ok":true} {"extra":true}`)
+	if err == nil || !strings.Contains(err.Error(), "trailing data") {
+		t.Fatalf("decodeToolInput trailing JSON error = %v, want trailing data error", err)
+	}
+}
+
+func TestIndexOf(t *testing.T) {
+	if got := indexOf(nil); got != 0 {
+		t.Fatalf("indexOf(nil) = %d, want 0", got)
+	}
+	idx := int32(7)
+	if got := indexOf(&idx); got != 7 {
+		t.Fatalf("indexOf(&7) = %d, want 7", got)
 	}
 }
 

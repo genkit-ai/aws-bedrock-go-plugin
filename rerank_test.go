@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/genkit"
 )
 
 func TestRerankInvokesCohereRerankAndMapsScores(t *testing.T) {
@@ -121,6 +122,127 @@ func TestRerankInvokesCohereRerankAndMapsScores(t *testing.T) {
 	}
 	if resp.Documents[1].Metadata == nil || resp.Documents[1].Metadata.Score != 0.42 {
 		t.Fatalf("second ranked score = %#v, want 0.42", resp.Documents[1].Metadata)
+	}
+}
+
+func TestRerankPublicWrapperValidation(t *testing.T) {
+	ctx := context.Background()
+	validReq := &ai.RerankerRequest{
+		Query:     ai.DocumentFromText("query", nil),
+		Documents: []*ai.Document{ai.DocumentFromText("document", nil)},
+	}
+
+	tests := []struct {
+		name string
+		g    *genkit.Genkit
+		req  *ai.RerankerRequest
+		want string
+	}{
+		{
+			name: "nil genkit",
+			g:    nil,
+			req:  validReq,
+			want: "Genkit instance required",
+		},
+		{
+			name: "missing plugin",
+			g:    genkit.Init(ctx),
+			req:  validReq,
+			want: "bedrock plugin not registered",
+		},
+		{
+			name: "nil request",
+			g:    genkit.Init(ctx, genkit.WithPlugins(testInitializedBedrock())),
+			req:  nil,
+			want: "request required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Rerank(ctx, tt.g, "cohere.rerank-v3-5:0", tt.req)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Rerank() error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRerankPublicWrapperValidationWithRegisteredPlugin(t *testing.T) {
+	ctx := context.Background()
+	validReq := &ai.RerankerRequest{
+		Query:     ai.DocumentFromText("query", nil),
+		Documents: []*ai.Document{ai.DocumentFromText("document", nil)},
+	}
+
+	t.Run("uninitialized plugin", func(t *testing.T) {
+		b := testInitializedBedrock()
+		g := genkit.Init(ctx, genkit.WithPlugins(b))
+		b.mu.Lock()
+		b.initted = false
+		b.mu.Unlock()
+
+		_, err := Rerank(ctx, g, "cohere.rerank-v3-5:0", validReq)
+		if err == nil || !strings.Contains(err.Error(), "plugin not initialized") {
+			t.Fatalf("Rerank() error = %v, want plugin not initialized", err)
+		}
+	})
+
+	t.Run("empty model ID", func(t *testing.T) {
+		g := genkit.Init(ctx, genkit.WithPlugins(testInitializedBedrock()))
+
+		_, err := Rerank(ctx, g, "", validReq)
+		if err == nil || !strings.Contains(err.Error(), "model ID required") {
+			t.Fatalf("Rerank() error = %v, want model ID required", err)
+		}
+	})
+}
+
+func TestRerankPublicWrapperDelegatesToPluginClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var gotBody cohereRerankRequest
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Errorf("failed to unmarshal request body: %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if gotBody.Query != "query text" {
+			t.Errorf("query = %q, want query text", gotBody.Query)
+		}
+		if gotBody.TopN != 1 {
+			t.Errorf("top_n = %d, want 1", gotBody.TopN)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"results":[{"index":0,"relevance_score":0.77}]}`)
+	}))
+	defer server.Close()
+
+	b := &Bedrock{
+		AWSConfig: &aws.Config{
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider("AKID", "SECRET", ""),
+			HTTPClient:   server.Client(),
+			BaseEndpoint: aws.String(server.URL),
+		},
+	}
+	g := genkit.Init(context.Background(), genkit.WithPlugins(b))
+
+	resp, err := Rerank(context.Background(), g, "cohere.rerank-v3-5:0", &ai.RerankerRequest{
+		Query:     ai.DocumentFromText("query text", nil),
+		Documents: []*ai.Document{ai.DocumentFromText("document text", nil)},
+		Options:   &RerankOptions{TopN: 1},
+	})
+	if err != nil {
+		t.Fatalf("Rerank returned error: %v", err)
+	}
+	if len(resp.Documents) != 1 || resp.Documents[0].Metadata == nil || resp.Documents[0].Metadata.Score != 0.77 {
+		t.Fatalf("response documents = %#v, want one scored document", resp.Documents)
 	}
 }
 
