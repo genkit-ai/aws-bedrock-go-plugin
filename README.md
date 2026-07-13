@@ -176,6 +176,26 @@ From the repository root, run the optional live reranking test with:
 go test . -run TestBedrockLive_CohereRerank -test-bedrock-region=us-east-1 -test-bedrock-rerank-model=cohere.rerank-v3-5:0
 ```
 
+Optional live tests are skipped by default. Pass `-test-bedrock-region` plus the
+model flag for the family you want to exercise:
+
+```bash
+go test . -run TestBedrockLive_ClaudeSync \
+  -test-bedrock-region=us-east-1 \
+  -test-bedrock-model-claude=us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+go test . -run TestBedrockLive_NovaSync \
+  -test-bedrock-region=us-east-1 \
+  -test-bedrock-model-nova=amazon.nova-lite-v1:0
+
+go test . -run 'TestBedrockLive_.*Embed' \
+  -test-bedrock-region=us-east-1 \
+  -test-bedrock-embed-titan-text=amazon.titan-embed-text-v1 \
+  -test-bedrock-embed-titan-multimodal=amazon.titan-embed-image-v1 \
+  -test-bedrock-embed-cohere-text=cohere.embed-english-v3 \
+  -test-bedrock-embed-nova=amazon.nova-embed-text-v1:0
+```
+
 ## Configuration Options
 
 The plugin supports various configuration options:
