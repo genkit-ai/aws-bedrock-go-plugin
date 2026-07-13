@@ -1,4 +1,5 @@
 // Copyright 2025 Xavier Portilla Edo
+// Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,11 +23,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
+
+const defaultToolModel = "amazon.nova-lite-v1:0"
+
+func exampleModelID() string {
+	if modelID := os.Getenv("BEDROCK_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultToolModel
+}
 
 // Mock function to process user data
 func processUserData(name, email string, age float64, interests []string, subscriptionType string) (string, error) {
@@ -34,8 +45,8 @@ func processUserData(name, email string, age float64, interests []string, subscr
 		return "", fmt.Errorf("name and email are required")
 	}
 
-	result := map[string]interface{}{
-		"processed_user": map[string]interface{}{
+	result := map[string]any{
+		"processed_user": map[string]any{
 			"name":              name,
 			"email":             email,
 			"age":               age,
@@ -55,8 +66,8 @@ func createOrder(orderID string, customerName string, itemCount float64, totalAm
 		return "", fmt.Errorf("order_id and customer_name are required")
 	}
 
-	result := map[string]interface{}{
-		"order_created": map[string]interface{}{
+	result := map[string]any{
+		"order_created": map[string]any{
 			"order_id":           orderID,
 			"customer_name":      customerName,
 			"item_count":         itemCount,
@@ -72,10 +83,11 @@ func createOrder(orderID string, customerName string, itemCount float64, totalAm
 
 func main() {
 	ctx := context.Background()
+	temperature := float32(0.1)
 
 	// Initialize Bedrock plugin
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	// Initialize Genkit
@@ -85,11 +97,14 @@ func main() {
 
 	log.Println("Starting advanced schema tool calling example...")
 
-	// Define Claude 3 model that supports tool calling
-	claudeModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
-		Name: "anthropic.claude-3-sonnet-20240229-v1:0",
+	// Define a chat model that supports tool calling. Set BEDROCK_MODEL to use
+	// a regional/global inference profile or another model your account can access.
+	modelID := exampleModelID()
+	chatModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
+		Name: modelID,
 		Type: "chat",
 	}, nil)
+	log.Printf("Using model: %s", modelID)
 
 	// Define user processing tool with custom schema
 	userProcessingTool := genkit.DefineTool(g, "process_user_data",
@@ -135,12 +150,13 @@ Order Details:
 Please process the user data first, then create the order.`
 
 	response, err := genkit.Generate(ctx, g,
-		ai.WithModel(claudeModel),
+		ai.WithModel(chatModel),
 		ai.WithTools(userProcessingTool, orderTool),
 		ai.WithMessages(ai.NewUserMessage(ai.NewTextPart(prompt))),
-		ai.WithConfig(map[string]interface{}{
-			"maxOutputTokens": 1000,
-			"temperature":     0.1,
+		ai.WithConfig(&bedrock.Config{
+			MaxTokens:   1000,
+			Temperature: &temperature,
+			ToolChoice:  bedrock.ToolChoiceAuto,
 		}),
 	)
 

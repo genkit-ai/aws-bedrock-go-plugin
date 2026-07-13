@@ -327,7 +327,7 @@ func TestConfigFromRequest_TypedAndAdditionalFields(t *testing.T) {
 // TestConfigFromRequest_LegacyMapKeys guards backward compatibility: the
 // historical map config (with maxOutputTokens) must still drive MaxTokens.
 func TestConfigFromRequest_LegacyMapKeys(t *testing.T) {
-	cases := []map[string]interface{}{
+	cases := []map[string]any{
 		{"maxOutputTokens": 1024, "temperature": 0.5},
 		{"max_tokens": 1024},
 		{"maxOutputTokens": float64(1024)}, // JSON-decoded shape

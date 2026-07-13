@@ -1,4 +1,5 @@
 // Copyright 2025 Xavier Portilla Edo
+// Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,18 +21,28 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
 
+const defaultEmbedModel = "amazon.titan-embed-text-v2:0"
+
+func exampleEmbedModelID() string {
+	if modelID := os.Getenv("BEDROCK_EMBED_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultEmbedModel
+}
+
 func main() {
 	ctx := context.Background()
 
 	// Initialize Bedrock plugin
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	// Initialize Genkit
@@ -41,8 +52,15 @@ func main() {
 
 	log.Println("Starting embedding generation example...")
 
-	// Define Titan Embedding model
-	titanEmbedder := bedrockPlugin.DefineEmbedder(g, "amazon.titan-embed-text-v1")
+	// Define an embedding model. Other supported IDs include:
+	// - amazon.titan-embed-text-v2:0
+	// - amazon.titan-embed-image-v1
+	// - cohere.embed-english-v3
+	// - cohere.embed-multilingual-v3
+	// - amazon.nova-embed-text-v1:0
+	modelID := exampleEmbedModelID()
+	embedder := bedrockPlugin.DefineEmbedder(g, modelID)
+	log.Printf("Using embedder: %s", modelID)
 
 	// Example texts for embedding
 	texts := []string{
@@ -57,7 +75,7 @@ func main() {
 
 		// Generate embedding
 		response, err := genkit.Embed(ctx, g,
-			ai.WithEmbedder(titanEmbedder),
+			ai.WithEmbedder(embedder),
 			ai.WithTextDocs(text),
 		)
 

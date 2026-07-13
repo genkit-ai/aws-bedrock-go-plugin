@@ -17,17 +17,21 @@
 
 package bedrock
 
-// Live tests exercise reasoning ("thinking") against a real Bedrock endpoint.
-// They are skipped by default and only run when the required model flags are
-// passed, e.g.:
+// Live tests exercise generation, reasoning ("thinking"), streaming, and tool
+// calls against real Bedrock endpoints. They are skipped by default and only
+// run when the required model flags are passed, e.g.:
 //
-//	go test -run TestBedrockLive_ClaudeReasoning \
+//	go test -run TestBedrockLive_ClaudeSync \
 //	    -test-bedrock-region=us-east-1 \
 //	    -test-bedrock-model-claude=us.anthropic.claude-haiku-4-5-20251001-v1:0
 //
+//	go test -run TestBedrockLive_NovaSync \
+//	    -test-bedrock-region=us-east-1 \
+//	    -test-bedrock-model-nova=amazon.nova-lite-v1:0
+//
 // They require AWS credentials in the environment and model access granted in
-// the target region. Reasoning support is region- and model-scoped on Bedrock;
-// these tests validate that the plugin's request/response shape round-trips,
+// the target region. Reasoning support is region- and model-scoped on Bedrock.
+// These tests validate request/response shapes against live Bedrock behavior,
 // not that any particular model is granted.
 
 import (
@@ -43,6 +47,7 @@ import (
 var (
 	testRegion      = flag.String("test-bedrock-region", "", "AWS region for Bedrock live tests (e.g. us-east-1)")
 	testModelClaude = flag.String("test-bedrock-model-claude", "", "Thinking-capable Claude model ID (e.g. us.anthropic.claude-haiku-4-5-20251001-v1:0)")
+	testModelNova   = flag.String("test-bedrock-model-nova", "", "Amazon Nova text model ID for live tests (e.g. amazon.nova-lite-v1:0)")
 )
 
 // reasoningBudgetTokens is the extended-thinking budget. Bedrock requires it to
@@ -53,17 +58,29 @@ const reasoningBudgetTokens = 1024
 // returns a Genkit instance with the Bedrock plugin and a defined Claude model.
 func requireLiveClaude(t *testing.T) (context.Context, *genkit.Genkit, ai.Model) {
 	t.Helper()
+	return requireLiveChatModel(t, *testModelClaude, "pass -test-bedrock-model-claude=<thinking-capable-model-id> to run")
+}
+
+// requireLiveNova asserts the live-test prerequisites and skips otherwise. It
+// returns a Genkit instance with the Bedrock plugin and a defined Nova model.
+func requireLiveNova(t *testing.T) (context.Context, *genkit.Genkit, ai.Model) {
+	t.Helper()
+	return requireLiveChatModel(t, *testModelNova, "pass -test-bedrock-model-nova=<nova-model-id> to run")
+}
+
+func requireLiveChatModel(t *testing.T, modelID, missingModelMessage string) (context.Context, *genkit.Genkit, ai.Model) {
+	t.Helper()
 	if *testRegion == "" {
 		t.Skip("bedrock live tests skipped; pass -test-bedrock-region=<region>")
 	}
-	if *testModelClaude == "" {
-		t.Skip("pass -test-bedrock-model-claude=<thinking-capable-model-id> to run")
+	if modelID == "" {
+		t.Skip(missingModelMessage)
 	}
 	ctx := context.Background()
 	pb := &Bedrock{Region: *testRegion}
 	g := genkit.Init(ctx, genkit.WithPlugins(pb))
 	m := pb.DefineModel(g, ModelDefinition{
-		Name: *testModelClaude,
+		Name: modelID,
 		Type: "chat",
 	}, nil)
 	return ctx, g, m
@@ -95,6 +112,42 @@ func firstReasoning(msg *ai.Message) *ai.Part {
 		}
 	}
 	return nil
+}
+
+// TestBedrockLive_ClaudeSync confirms a standard synchronous Claude Converse
+// request works without enabling Bedrock reasoning.
+func TestBedrockLive_ClaudeSync(t *testing.T) {
+	ctx, g, m := requireLiveClaude(t)
+
+	resp, err := genkit.Generate(ctx, g,
+		ai.WithModel(m),
+		ai.WithPrompt("Reply with one short sentence about AWS Bedrock."),
+		ai.WithConfig(&Config{MaxTokens: 64}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text() == "" {
+		t.Fatal("Claude sync response text is empty")
+	}
+}
+
+// TestBedrockLive_NovaSync confirms a synchronous Nova Converse request works
+// through the same generation path as the rest of the live matrix.
+func TestBedrockLive_NovaSync(t *testing.T) {
+	ctx, g, m := requireLiveNova(t)
+
+	resp, err := genkit.Generate(ctx, g,
+		ai.WithModel(m),
+		ai.WithPrompt("Reply with one short sentence about AWS Bedrock."),
+		ai.WithConfig(&Config{MaxTokens: 64}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text() == "" {
+		t.Fatal("Nova sync response text is empty")
+	}
 }
 
 // TestBedrockLive_ClaudeReasoningSync confirms a thinking-enabled request comes

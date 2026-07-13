@@ -25,7 +25,7 @@ package bedrock
 //
 //	go test -run TestBedrockLive_TitanImage \
 //	    -test-bedrock-region=us-east-1 \
-//	    -test-bedrock-image-titan=amazon.titan-image-generator-v1
+//	    -test-bedrock-image-titan=amazon.titan-image-generator-v2:0
 //
 //	go test -run TestBedrockLive_NovaCanvasImage \
 //	    -test-bedrock-region=us-east-1 \
@@ -43,7 +43,7 @@ package bedrock
 //
 //	go test -run 'TestBedrockLive_.*Image' \
 //	    -test-bedrock-region=us-east-1 \
-//	    -test-bedrock-image-titan=amazon.titan-image-generator-v1 \
+//	    -test-bedrock-image-titan=amazon.titan-image-generator-v2:0 \
 //	    -test-bedrock-image-nova-canvas=amazon.nova-canvas-v1:0 \
 //	    -test-bedrock-image-sdxl=stability.stable-diffusion-xl-v1:0 \
 //	    -test-bedrock-image-modern-stability=stability.sd3-large-v1:0
@@ -60,7 +60,7 @@ import (
 
 // Image model flags — each defaults to "" (skip).
 var (
-	testImageTitan           = flag.String("test-bedrock-image-titan", "", "Titan Image Generator model ID (e.g. amazon.titan-image-generator-v1)")
+	testImageTitan           = flag.String("test-bedrock-image-titan", "", "Titan Image Generator model ID (e.g. amazon.titan-image-generator-v2:0)")
 	testImageNovaCanvas      = flag.String("test-bedrock-image-nova-canvas", "", "Nova Canvas model ID (e.g. amazon.nova-canvas-v1:0)")
 	testImageStableDiffusion = flag.String("test-bedrock-image-sdxl", "", "Legacy Stable Diffusion XL model ID (e.g. stability.stable-diffusion-xl-v1:0)")
 	testImageModernStability = flag.String("test-bedrock-image-modern-stability", "", "Modern Stability model ID (e.g. stability.sd3-large-v1:0 or stability.stable-image-core-v1:0)")

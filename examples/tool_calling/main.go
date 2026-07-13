@@ -1,4 +1,5 @@
 // Copyright 2025 Xavier Portilla Edo
+// Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +32,15 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	bedrock "github.com/xavidop/genkit-aws-bedrock-go"
 )
+
+const defaultToolModel = "amazon.nova-lite-v1:0"
+
+func exampleModelID() string {
+	if modelID := os.Getenv("BEDROCK_MODEL"); modelID != "" {
+		return modelID
+	}
+	return defaultToolModel
+}
 
 // Example tool for getting current weather
 func getCurrentWeather(location string, unit string) (string, error) {
@@ -92,9 +103,10 @@ func getCurrentTime(timezone string) (string, error) {
 
 func main() {
 	ctx := context.Background()
+	temperature := float32(0.1)
 
 	bedrockPlugin := &bedrock.Bedrock{
-		Region: "us-east-1",
+		Region: os.Getenv("BEDROCK_REGION"),
 	}
 
 	// Initialize Genkit
@@ -104,11 +116,14 @@ func main() {
 
 	log.Println("Starting tool calling example...")
 
-	// Define Claude 3 model that supports tool calling
-	claudeModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
-		Name: "anthropic.claude-3-sonnet-20240229-v1:0",
+	// Define a chat model that supports tool calling. Set BEDROCK_MODEL to use
+	// a regional/global inference profile or another model your account can access.
+	modelID := exampleModelID()
+	chatModel := bedrockPlugin.DefineModel(g, bedrock.ModelDefinition{
+		Name: modelID,
 		Type: "chat",
 	}, nil)
+	log.Printf("Using model: %s", modelID)
 
 	// Define weather tool
 	weatherTool := genkit.DefineTool(g, "get_current_weather",
@@ -157,14 +172,15 @@ func main() {
 		log.Printf("Prompt: %s", prompt)
 
 		response, err := genkit.Generate(ctx, g,
-			ai.WithModel(claudeModel),
+			ai.WithModel(chatModel),
 			ai.WithMessages(ai.NewUserMessage(
 				ai.NewTextPart(prompt),
 			)),
 			ai.WithTools(weatherTool, calcTool, timeTool),
-			ai.WithConfig(map[string]interface{}{
-				"temperature":     0.1, // Lower temperature for more consistent tool usage
-				"maxOutputTokens": 1000,
+			ai.WithConfig(&bedrock.Config{
+				Temperature: &temperature, // Lower temperature for more consistent tool usage.
+				MaxTokens:   1000,
+				ToolChoice:  bedrock.ToolChoiceAuto,
 			}),
 		)
 
@@ -195,7 +211,7 @@ func main() {
 
 	// Summary
 	log.Printf("\n=== Summary ===")
-	log.Printf("Tested %d different prompts with Claude 3 Sonnet", len(prompts))
+	log.Printf("Tested %d different prompts with %s", len(prompts), modelID)
 	log.Printf("Available tools: weather (%s), calculator (%s), time (%s)",
 		"get_current_weather", "calculate", "get_current_time")
 	log.Printf("The model should have automatically selected appropriate tools based on the prompts")
