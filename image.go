@@ -258,6 +258,13 @@ func (b *Bedrock) generateModernStabilityImage(ctx context.Context, modelName, p
 		"prompt":        prompt,
 		"output_format": "png",
 	}
+	if config != nil {
+		if configMap, ok := config.(map[string]any); ok {
+			for k, v := range configMap {
+				requestBody[k] = v
+			}
+		}
+	}
 
 	body, err := json.Marshal(requestBody)
 	if err != nil {

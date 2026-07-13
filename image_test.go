@@ -187,7 +187,7 @@ func TestGenerateImage_ModernStabilityUsesPromptPayload(t *testing.T) {
 	assertImageResponse(t, resp, req, "modern-image")
 }
 
-func TestGenerateImage_ModernStabilityKeepsFixedDefaults(t *testing.T) {
+func TestGenerateImage_ModernStabilityMergesConfigOverrides(t *testing.T) {
 	var gotBody map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -215,14 +215,14 @@ func TestGenerateImage_ModernStabilityKeepsFixedDefaults(t *testing.T) {
 	if got := gotBody["prompt"]; got != "modern stability" {
 		t.Fatalf("prompt = %v, want modern stability", got)
 	}
-	if got := gotBody["aspect_ratio"]; got != nil {
-		t.Fatalf("aspect_ratio = %v, want absent", got)
+	if got := gotBody["aspect_ratio"]; got != "16:9" {
+		t.Fatalf("aspect_ratio = %v, want 16:9", got)
 	}
-	if got := gotBody["seed"]; got != nil {
-		t.Fatalf("seed = %v, want absent", got)
+	if got := gotBody["seed"]; got != float64(42) {
+		t.Fatalf("seed = %v, want 42", got)
 	}
-	if got := gotBody["output_format"]; got != "png" {
-		t.Fatalf("output_format = %v, want fixed png", got)
+	if got := gotBody["output_format"]; got != "jpeg" {
+		t.Fatalf("output_format = %v, want jpeg", got)
 	}
 	assertImageResponse(t, resp, req, "modern-image")
 }
@@ -314,6 +314,7 @@ func TestGenerateImage_ConfigOverridesSurviveGenkitSchemaValidation(t *testing.T
 		model    string
 		config   map[string]any
 		response string
+		wantBody map[string]any
 	}{
 		{
 			name:     "titan nested imageGenerationConfig",
@@ -338,12 +339,18 @@ func TestGenerateImage_ConfigOverridesSurviveGenkitSchemaValidation(t *testing.T
 			model:    "stability.sd3-large-v1:0",
 			config:   map[string]any{"aspect_ratio": "16:9"},
 			response: `{"images":["modern-image"],"finish_reasons":["SUCCESS"]}`,
+			wantBody: map[string]any{"aspect_ratio": "16:9"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var gotBody map[string]any
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Errorf("unmarshal request body: %v", err)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = fmt.Fprint(w, tt.response)
 			}))
@@ -372,6 +379,11 @@ func TestGenerateImage_ConfigOverridesSurviveGenkitSchemaValidation(t *testing.T
 			}
 			if resp.Message == nil || len(resp.Message.Content) == 0 {
 				t.Fatal("expected at least one content part in response")
+			}
+			for key, want := range tt.wantBody {
+				if got := gotBody[key]; got != want {
+					t.Fatalf("request body %q = %v, want %v", key, got, want)
+				}
 			}
 		})
 	}
