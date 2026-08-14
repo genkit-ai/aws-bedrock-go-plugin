@@ -389,6 +389,70 @@ func TestGenerateImage_ConfigOverridesSurviveGenkitSchemaValidation(t *testing.T
 	}
 }
 
+func TestGenerateImage_UnknownConfigKeysAreStripped(t *testing.T) {
+	tests := []struct {
+		name   string
+		model  string
+		config map[string]any
+	}{
+		{
+			name:   "titan nested imageGenerationConfig",
+			model:  "amazon.titan-image-generator-v1",
+			config: map[string]any{"imageGenerationConfig": map[string]any{"apiKey": "secret", "seed": 7}},
+		},
+		{
+			name:   "nova canvas nested imageGenerationConfig",
+			model:  "amazon.nova-canvas-v1:0",
+			config: map[string]any{"imageGenerationConfig": map[string]any{"apiKey": "secret", "quality": "premium"}},
+		},
+		{
+			name:   "legacy stable diffusion top-level",
+			model:  "stability.stable-diffusion-xl-v1:0",
+			config: map[string]any{"apiKey": "secret", "cfg_scale": 10},
+		},
+		{
+			name:   "modern stability top-level",
+			model:  "stability.sd3-large-v1:0",
+			config: map[string]any{"apiKey": "secret", "aspect_ratio": "16:9"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Errorf("unmarshal request body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"images":["img"],"artifacts":[{"base64":"img","finishReason":"SUCCESS"}],"finish_reasons":["SUCCESS"]}`)
+			}))
+			defer server.Close()
+
+			b := newTestBedrock(server)
+			req := imagePromptRequest("prompt")
+			req.Config = tt.config
+
+			if _, err := b.generateImage(context.Background(), tt.model, req, nil); err != nil {
+				t.Fatalf("generateImage error: %v", err)
+			}
+
+			if raw, err := json.Marshal(gotBody); err == nil && strings.Contains(string(raw), "secret") {
+				t.Fatalf("request body leaked unknown config key: %s", raw)
+			}
+			if cfg, ok := gotBody["imageGenerationConfig"].(map[string]any); ok {
+				if _, ok := cfg["apiKey"]; ok {
+					t.Fatalf("imageGenerationConfig retained unknown key apiKey: %v", cfg)
+				}
+			}
+			if _, ok := gotBody["apiKey"]; ok {
+				t.Fatalf("request body retained unknown top-level key apiKey: %v", gotBody)
+			}
+		})
+	}
+}
+
 func imagePromptRequest(prompt string) *ai.ModelRequest {
 	return &ai.ModelRequest{
 		Messages: []*ai.Message{
