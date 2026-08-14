@@ -133,6 +133,9 @@ var modernStabilityConfigKeys = map[string]struct{}{
 // allowed, so unrecognized fields (e.g. a secret accidentally left in a
 // shared config map) never reach the outbound request body.
 func mergeAllowedConfig(dst, src map[string]any, allowed map[string]struct{}) {
+	if dst == nil {
+		return
+	}
 	for k, v := range src {
 		if _, ok := allowed[k]; ok {
 			dst[k] = v
@@ -186,7 +189,9 @@ func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt stri
 		if configMap, ok := config.(map[string]any); ok {
 			if imageConfig, exists := configMap["imageGenerationConfig"]; exists {
 				if imgCfg, ok := imageConfig.(map[string]any); ok {
-					mergeAllowedConfig(requestBody["imageGenerationConfig"].(map[string]any), imgCfg, imageGenerationConfigKeys)
+					if targetCfg, ok := requestBody["imageGenerationConfig"].(map[string]any); ok {
+						mergeAllowedConfig(targetCfg, imgCfg, imageGenerationConfigKeys)
+					}
 				}
 			}
 		}
@@ -376,7 +381,9 @@ func (b *Bedrock) generateNovaCanvasImage(ctx context.Context, modelName, prompt
 		if configMap, ok := config.(map[string]any); ok {
 			if imageConfig, exists := configMap["imageGenerationConfig"]; exists {
 				if imgCfg, ok := imageConfig.(map[string]any); ok {
-					mergeAllowedConfig(requestBody["imageGenerationConfig"].(map[string]any), imgCfg, imageGenerationConfigKeys)
+					if targetCfg, ok := requestBody["imageGenerationConfig"].(map[string]any); ok {
+						mergeAllowedConfig(targetCfg, imgCfg, imageGenerationConfigKeys)
+					}
 				}
 			}
 		}
