@@ -86,6 +86,63 @@ func isModernStabilityImageModel(modelName string) bool {
 	return strings.Contains(modelName, "sd3-") || strings.Contains(modelName, "stable-image")
 }
 
+// imageGenerationConfigKeys are the recognized fields inside the nested
+// imageGenerationConfig object accepted by Titan Image Generator and Nova
+// Canvas. Callers pass config as a freeform map[string]any (imageConfigSchema
+// intentionally has no property restrictions, since each model family has a
+// different shape), so we allow-list the fields we forward rather than
+// copying the map verbatim into the outbound request body.
+var imageGenerationConfigKeys = map[string]struct{}{
+	"numberOfImages": {},
+	"quality":        {},
+	"height":         {},
+	"width":          {},
+	"cfgScale":       {},
+	"seed":           {},
+}
+
+// legacyStabilityConfigKeys are the recognized top-level fields for legacy
+// Stable Diffusion (stability.stable-diffusion-*) requests.
+var legacyStabilityConfigKeys = map[string]struct{}{
+	"cfg_scale":            {},
+	"clip_guidance_preset": {},
+	"height":               {},
+	"width":                {},
+	"samples":              {},
+	"steps":                {},
+	"seed":                 {},
+	"style_preset":         {},
+	"sampler":              {},
+	"extras":               {},
+}
+
+// modernStabilityConfigKeys are the recognized top-level fields for modern
+// Stability (stability.sd3-*, stability.stable-image-*) requests.
+var modernStabilityConfigKeys = map[string]struct{}{
+	"mode":            {},
+	"aspect_ratio":    {},
+	"negative_prompt": {},
+	"seed":            {},
+	"output_format":   {},
+	"style_preset":    {},
+	"cfg_scale":       {},
+	"strength":        {},
+}
+
+// mergeAllowedConfig copies from src into dst only the keys present in
+// allowed, so unrecognized fields (e.g. a secret accidentally left in a
+// shared config map) never reach the outbound request body.
+func mergeAllowedConfig(dst, src map[string]any, allowed map[string]struct{}) {
+	if dst == nil {
+		return
+	}
+	for k, v := range src {
+		if _, ok := allowed[k]; ok {
+			dst[k] = v
+		}
+	}
+}
+
 func imageResponse(input *ai.ModelRequest, images []string) (*ai.ModelResponse, error) {
 	if len(images) == 0 {
 		return nil, fmt.Errorf("no images generated")
@@ -132,8 +189,8 @@ func (b *Bedrock) generateTitanImage(ctx context.Context, modelName, prompt stri
 		if configMap, ok := config.(map[string]any); ok {
 			if imageConfig, exists := configMap["imageGenerationConfig"]; exists {
 				if imgCfg, ok := imageConfig.(map[string]any); ok {
-					for k, v := range imgCfg {
-						requestBody["imageGenerationConfig"].(map[string]any)[k] = v
+					if targetCfg, ok := requestBody["imageGenerationConfig"].(map[string]any); ok {
+						mergeAllowedConfig(targetCfg, imgCfg, imageGenerationConfigKeys)
 					}
 				}
 			}
@@ -198,9 +255,7 @@ func (b *Bedrock) generateStableDiffusionImage(ctx context.Context, modelName, p
 	// Apply config if provided
 	if config != nil {
 		if configMap, ok := config.(map[string]any); ok {
-			for k, v := range configMap {
-				requestBody[k] = v
-			}
+			mergeAllowedConfig(requestBody, configMap, legacyStabilityConfigKeys)
 		}
 	}
 
@@ -260,9 +315,7 @@ func (b *Bedrock) generateModernStabilityImage(ctx context.Context, modelName, p
 	}
 	if config != nil {
 		if configMap, ok := config.(map[string]any); ok {
-			for k, v := range configMap {
-				requestBody[k] = v
-			}
+			mergeAllowedConfig(requestBody, configMap, modernStabilityConfigKeys)
 		}
 	}
 
@@ -328,8 +381,8 @@ func (b *Bedrock) generateNovaCanvasImage(ctx context.Context, modelName, prompt
 		if configMap, ok := config.(map[string]any); ok {
 			if imageConfig, exists := configMap["imageGenerationConfig"]; exists {
 				if imgCfg, ok := imageConfig.(map[string]any); ok {
-					for k, v := range imgCfg {
-						requestBody["imageGenerationConfig"].(map[string]any)[k] = v
+					if targetCfg, ok := requestBody["imageGenerationConfig"].(map[string]any); ok {
+						mergeAllowedConfig(targetCfg, imgCfg, imageGenerationConfigKeys)
 					}
 				}
 			}
