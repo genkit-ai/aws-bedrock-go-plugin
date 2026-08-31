@@ -512,6 +512,20 @@ func TestDefineModelRegistersProvidedMetadata(t *testing.T) {
 		Versions: []string{"custom-version"},
 	})
 
+	// genkit-go >= 1.12 augments the advertised config schema with a string
+	// "version" property whenever the model declares supported Versions,
+	// since callers can pin a version through the config (see
+	// ai.NewModelAction / the unexported modelConfigSchemas helper). The
+	// provided customSchema itself is left untouched; the framework clones
+	// it before adding the property.
+	wantSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"custom":  map[string]any{"type": "string"},
+			"version": map[string]any{"type": "string"},
+		},
+	}
+
 	modelMeta := modelMetadata(t, m)
 	if got := modelMeta["label"]; got != "Custom Bedrock Label" {
 		t.Fatalf("label = %v, want custom label", got)
@@ -519,8 +533,17 @@ func TestDefineModelRegistersProvidedMetadata(t *testing.T) {
 	if got := modelMeta["stage"]; got != ai.ModelStageDeprecated {
 		t.Fatalf("stage = %v, want %v", got, ai.ModelStageDeprecated)
 	}
-	if got := modelMeta["customOptions"]; !reflect.DeepEqual(got, customSchema) {
-		t.Fatalf("customOptions = %v, want provided schema", got)
+	if got := modelMeta["customOptions"]; !reflect.DeepEqual(got, wantSchema) {
+		t.Fatalf("customOptions = %v, want %v", got, wantSchema)
+	}
+	// The caller-provided schema itself must not be mutated by the
+	// framework's version-property injection.
+	origSchema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"custom": map[string]any{"type": "string"}},
+	}
+	if !reflect.DeepEqual(customSchema, origSchema) {
+		t.Fatalf("customSchema was mutated: %v, want %v", customSchema, origSchema)
 	}
 
 	versions, ok := modelMeta["versions"].([]string)
