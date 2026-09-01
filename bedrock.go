@@ -165,21 +165,27 @@ func (b *Bedrock) DefineModel(g *genkit.Genkit, model ModelDefinition, info *ai.
 		ConfigSchema: configSchemaMap,
 	}
 
-	// Create the model function based on model type
+	// Create the model function based on model type. The callback receives
+	// the request's config as a typed value (ai.ModelActionFunc), but the
+	// config is still read from input.Config inside generateText/generateImage
+	// (via configFromRequest), so the typed parameter is intentionally
+	// ignored here (Config=any keeps req.Config's shape unchanged).
 	switch model.Type {
 	case "image":
-		return genkit.DefineModel(g, api.NewName(provider, model.Name), meta, func(
+		return genkit.DefineModelAction(g, api.NewName(provider, model.Name), meta, func(
 			ctx context.Context,
 			input *ai.ModelRequest,
-			cb func(context.Context, *ai.ModelResponseChunk) error,
+			_ any,
+			cb ai.ModelStreamCallback,
 		) (*ai.ModelResponse, error) {
 			return b.generateImage(ctx, model.Name, input, cb)
 		})
 	default:
-		return genkit.DefineModel(g, api.NewName(provider, model.Name), meta, func(
+		return genkit.DefineModelAction(g, api.NewName(provider, model.Name), meta, func(
 			ctx context.Context,
 			input *ai.ModelRequest,
-			cb func(context.Context, *ai.ModelResponseChunk) error,
+			_ any,
+			cb ai.ModelStreamCallback,
 		) (*ai.ModelResponse, error) {
 			return b.generateText(ctx, model.Name, input, cb)
 		})
@@ -195,9 +201,10 @@ func (b *Bedrock) DefineEmbedder(g *genkit.Genkit, modelName string) ai.Embedder
 		panic("bedrock: Init not called")
 	}
 
-	return genkit.DefineEmbedder(g, api.NewName(provider, modelName), nil, func(
+	return genkit.DefineEmbedderAction(g, api.NewName(provider, modelName), nil, func(
 		ctx context.Context,
 		req *ai.EmbedRequest,
+		_ any,
 	) (*ai.EmbedResponse, error) {
 		return b.embed(ctx, modelName, req)
 	})
