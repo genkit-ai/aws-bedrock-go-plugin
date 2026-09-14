@@ -144,6 +144,11 @@ func newBedrockReasoningPart(text, signature string, redacted []byte) *ai.Part {
 		sig = []byte(signature)
 	}
 	p := ai.NewReasoningPart(text, sig)
+	// ai.NewReasoningPart only allocates Metadata when it is given a
+	// signature, so a redacted-only part arrives with a nil map.
+	if (len(sig) > 0 || len(redacted) > 0) && p.Metadata == nil {
+		p.Metadata = make(map[string]any, 2)
+	}
 	if len(sig) > 0 {
 		p.Metadata[reasoningSignatureMetadataKey] = sig
 	}

@@ -54,7 +54,9 @@ func TestReasoningPartToContentBlocks_RoundTripsBedrockReasoning(t *testing.T) {
 	// Redacted reasoning stored as a base64 string (JSON round-trip shape) →
 	// ReasoningContentBlockMemberRedactedContent with the decoded bytes.
 	redacted := ai.NewReasoningPart("", nil)
-	redacted.Metadata[redactedReasoningMetadataKey] = base64.StdEncoding.EncodeToString([]byte("encrypted"))
+	redacted.Metadata = map[string]any{
+		redactedReasoningMetadataKey: base64.StdEncoding.EncodeToString([]byte("encrypted")),
+	}
 	blocks = reasoningPartToContentBlocks(redacted)
 	if len(blocks) != 1 {
 		t.Fatalf("redacted len(blocks) = %d, want 1", len(blocks))
@@ -69,6 +71,34 @@ func TestReasoningPartToContentBlocks_RoundTripsBedrockReasoning(t *testing.T) {
 	}
 	if string(red.Value) != "encrypted" {
 		t.Errorf("redacted = %q, want encrypted", string(red.Value))
+	}
+}
+
+// Bedrock can return redacted reasoning with no signature. ai.NewReasoningPart
+// only allocates Metadata when given a signature, so the constructor must
+// allocate it itself rather than writing into a nil map.
+func TestNewBedrockReasoningPart_RedactedWithoutSignature(t *testing.T) {
+	p := newBedrockReasoningPart("", "", []byte("encrypted"))
+	if p.Metadata == nil {
+		t.Fatalf("Metadata = nil, want allocated map")
+	}
+	if got := metadataBytes(p.Metadata, redactedReasoningMetadataKey); string(got) != "encrypted" {
+		t.Errorf("redacted = %q, want encrypted", string(got))
+	}
+	if _, ok := p.Metadata[reasoningSignatureMetadataKey]; ok {
+		t.Errorf("unexpected signature key on a redacted-only part")
+	}
+}
+
+// A part with neither signature nor redacted bytes stores nothing, and must not
+// panic on the way there.
+func TestNewBedrockReasoningPart_PlainTextHasNoBedrockMetadata(t *testing.T) {
+	p := newBedrockReasoningPart("just thinking", "", nil)
+	if _, ok := p.Metadata[redactedReasoningMetadataKey]; ok {
+		t.Errorf("unexpected redacted key")
+	}
+	if _, ok := p.Metadata[reasoningSignatureMetadataKey]; ok {
+		t.Errorf("unexpected signature key")
 	}
 }
 
