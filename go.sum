@@ -1,7 +1,7 @@
 github.com/aws/aws-sdk-go-v2 v1.47.7 h1:jBmtzRtGWVAzbfc4RBWo1dTte0ZZH8p9U42YJIw2+Bw=
 github.com/aws/aws-sdk-go-v2 v1.47.7/go.mod h1:I8lFSH4MGrZiw2m7miCrRYHsgpC1+HW8uiVGOiPYPcw=
-github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.25 h1:MW0Iql1SOTgQPj8mCxrU/eH/K/AIDWi08ItOsXaWRLU=
-github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.25/go.mod h1:+ucVYmHYB3JqVueY0E1RHahdXAnKQbIHqybSbvOUbOM=
+github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.26 h1:SJNA4XaM8Z09adeTHf/vME93jzl44lJV70pSawIBXac=
+github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.26/go.mod h1:l0ME5pd2QytH8UZzETcrt90x9Bm+3TyBVeWfVEcZ82c=
 github.com/aws/aws-sdk-go-v2/config v1.33.15 h1:eSO7lvznhY5nMN1K9xK+pPTwNNH0chVmCIzH3C5as+E=
 github.com/aws/aws-sdk-go-v2/config v1.33.15/go.mod h1:QLBxqEJFcgbrsw2dHaWMDW6DcIFWkHplXJMZGB/s2Ew=
 github.com/aws/aws-sdk-go-v2/credentials v1.20.15 h1:LUFG3364w8wKBhGxGQ2XUxCCs+yOUrSg0dWUtBJskp8=
@@ -14,8 +14,8 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.10 h1:r8p95YELmfmuV9VvAa
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.10/go.mod h1:W3M52Mqai5TjgzyL/dEG+UwE+Xz9PykyjXelvbAzWIA=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.10 h1:iytL6kFchhbCWWEfLzMGq1+yRecF7+BOXnp70J9zNRM=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.10/go.mod h1:OaBcfeWMHPSyFqiHL/KN1zVIricTvYDNiO4XhR781eM=
-github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.63.8 h1:x25ldU/QhEZuSlPZCbS6Ywd79X7VbgySfG6N3cjMtvo=
-github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.63.8/go.mod h1:7Y36dam68+YHAWMR1CCjW1t70Pv5P5deNLgVirbgpKg=
+github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.63.11 h1:3cBKOvInDfvttStko8tSwOzDWzUIYjgB0RbLpqdOQUQ=
+github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.63.11/go.mod h1:aLqug6Wt9XH/YCyXDb8NLghoT/3OKX6VVrnGab16n3M=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.24 h1:jGzHjc2jDx08Rji1JTBtMxuXUDG7muTEw+ExYXqFzPg=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.24/go.mod h1:uJt75pK2cEyY80F5C+DK9YkCkJWsMkJViHxLYZRHl8Y=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.10 h1:3nCD0vZOTTMypcaEEJW0rAWqEgUXVzfmNn3dDI1IQ7I=
