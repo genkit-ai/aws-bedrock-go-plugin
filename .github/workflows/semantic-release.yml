@@ -8,15 +8,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   semantic-release:
     name: Semantic Release
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     
     outputs:
       new-release-published: ${{ steps.semantic.outputs.new-release-published }}
@@ -58,6 +60,8 @@ jobs:
     name: GoReleaser
     runs-on: ubuntu-latest
     needs: semantic-release
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout code
